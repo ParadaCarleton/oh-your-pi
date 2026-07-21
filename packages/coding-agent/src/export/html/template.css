@@ -269,9 +269,33 @@
       white-space: pre;
     }
 
-    .tree-marker {
-      color: var(--accent);
+    .tree-collapse {
+      width: 18px;
+      height: 18px;
+      margin: -1px 2px -1px 0;
+      padding: 0;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      border-radius: 3px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 16px;
+      font-weight: bold;
+      text-align: center;
       flex-shrink: 0;
+    }
+
+    .tree-collapse:hover,
+    .tree-collapse:focus-visible {
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 16%, transparent);
+    }
+
+    .tree-collapse.empty {
+      visibility: hidden;
+      cursor: default;
     }
 
     .tree-content {

@@ -631,13 +631,33 @@
 
       let currentLeafId = leafId;
       let currentTargetId = urlTargetId || leafId;
+      const collapsedNodeIds = new Set();
+
+      function hideCollapsedDescendants(flatNodes) {
+        const parentIds = new Map(flatNodes.map(flatNode => [flatNode.node.entry.id, flatNode.node.entry.parentId]));
+        return flatNodes.filter(flatNode => {
+          let parentId = parentIds.get(flatNode.node.entry.id);
+          while (parentId) {
+            if (collapsedNodeIds.has(parentId)) return false;
+            parentId = parentIds.get(parentId);
+          }
+          return true;
+        });
+      }
+
+      function toggleTreeNode(entryId) {
+        if (collapsedNodeIds.has(entryId)) collapsedNodeIds.delete(entryId);
+        else collapsedNodeIds.add(entryId);
+        forceTreeRerender();
+      }
       let treeRendered = false;
 
       function renderTree() {
         const tree = buildTree();
         const activePathIds = buildActivePathIds(currentLeafId);
         const flatNodes = flattenTree(tree, activePathIds);
-        const filtered = projectFilteredNodes(flatNodes, filterNodes(flatNodes, currentLeafId));
+        const visible = filterNodes(hideCollapsedDescendants(flatNodes), currentLeafId);
+        const filtered = projectFilteredNodes(flatNodes, visible);
         const container = document.getElementById('tree-container');
 
         // Full render only on first call or when filter/search changes
@@ -660,18 +680,38 @@
             prefixSpan.className = 'tree-prefix';
             prefixSpan.textContent = prefix;
 
-            const marker = document.createElement('span');
-            marker.className = 'tree-marker';
-            marker.textContent = isOnPath ? '•' : ' ';
+            const collapse = document.createElement('button');
+            collapse.className = 'tree-collapse';
+            if (flatNode.node.children.length > 0) {
+              const isCollapsed = collapsedNodeIds.has(entry.id);
+              collapse.textContent = isCollapsed ? '▸' : '▾';
+              collapse.title = isCollapsed ? 'Expand branch' : 'Collapse branch';
+              collapse.setAttribute('aria-label', collapse.title);
+              collapse.setAttribute('aria-expanded', String(!isCollapsed));
+              collapse.addEventListener('click', (event) => {
+                event.stopPropagation();
+                toggleTreeNode(entry.id);
+              });
+            } else {
+              collapse.classList.add('empty');
+              collapse.tabIndex = -1;
+              collapse.setAttribute('aria-hidden', 'true');
+            }
 
             const content = document.createElement('span');
             content.className = 'tree-content';
             content.innerHTML = getTreeNodeDisplayHtml(entry, flatNode.node.label);
 
             div.appendChild(prefixSpan);
-            div.appendChild(marker);
+            div.appendChild(collapse);
             div.appendChild(content);
-            div.addEventListener('click', () => navigateTo(entry.id));
+            div.addEventListener('click', () => {
+              if (entry.id === currentTargetId && flatNode.node.children.length > 0) {
+                toggleTreeNode(entry.id);
+              } else {
+                navigateTo(entry.id);
+              }
+            });
 
             container.appendChild(div);
           }
@@ -688,10 +728,6 @@
             node.classList.toggle('in-path', isOnPath);
             node.classList.toggle('active', isTarget);
 
-            const marker = node.querySelector('.tree-marker');
-            if (marker) {
-              marker.textContent = isOnPath ? '•' : ' ';
-            }
           }
         }
 
@@ -1320,7 +1356,7 @@
         let html = `
           <div class="header">
             <h1>Session: ${escapeHtml(header?.id || 'unknown')}</h1>
-            <div class="help-bar">T toggle thinking · O toggle tools</div>
+            <div class="help-bar">T toggle thinking · O toggle tools · click the active branch to collapse</div>
             <div class="header-info">
               <div class="info-item"><span class="info-label">Date:</span><span class="info-value">${header?.timestamp ? new Date(header.timestamp).toLocaleString() : 'unknown'}</span></div>
               <div class="info-item"><span class="info-label">Models:</span><span class="info-value">${globalStats.models.join(', ') || 'unknown'}</span></div>

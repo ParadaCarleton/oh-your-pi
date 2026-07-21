@@ -19,6 +19,22 @@ function extractKeydownHandlerBody(source: string): string {
 	throw new Error("keydown listener did not close");
 }
 
+function extractFunction(source: string, name: string): string {
+	const start = source.indexOf(`function ${name}(`);
+	expect(start).toBeGreaterThanOrEqual(0);
+	const bodyStart = source.indexOf("{", start);
+	let depth = 1;
+	for (let i = bodyStart + 1; i < source.length; i++) {
+		const ch = source[i];
+		if (ch === "{") depth++;
+		else if (ch === "}") {
+			depth--;
+			if (depth === 0) return source.slice(start, i + 1);
+		}
+	}
+	throw new Error(`${name} did not close`);
+}
+
 function exerciseShortcut(body: string, eventInit: Record<string, unknown>) {
 	const calls: string[] = [];
 	let prevented = false;
@@ -91,5 +107,20 @@ describe("HTML export keyboard shortcuts", () => {
 			calls: [],
 			prevented: false,
 		});
+	});
+	it("removes every descendant of a collapsed sidebar branch while retaining the branch node", () => {
+		const root = { node: { entry: { id: "root", parentId: null } } };
+		const child = { node: { entry: { id: "child", parentId: "root" } } };
+		const grandchild = { node: { entry: { id: "grandchild", parentId: "child" } } };
+
+		const run = new Function(
+			"collapsedNodeIds",
+			`${extractFunction(templateJs, "hideCollapsedDescendants")}; return hideCollapsedDescendants;`,
+		) as (
+			collapsedNodeIds: Set<string>,
+		) => (flatNodes: Array<{ node: { entry: { id: string; parentId: string | null } } }>) => unknown[];
+		const filtered = run(new Set(["root"]))([root, child, grandchild]);
+
+		expect(filtered).toEqual([root]);
 	});
 });

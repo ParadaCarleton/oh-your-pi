@@ -1,0 +1,130 @@
+name: Rebase fork onto upstream release
+
+on:
+   schedule:
+      - cron: "17 */6 * * *"
+   workflow_dispatch:
+      inputs:
+         upstream_tag:
+            description: "Upstream release tag (blank = latest stable)"
+            required: false
+            type: string
+
+concurrency:
+   group: rebase-upstream-release
+   cancel-in-progress: false
+
+permissions:
+   contents: write
+   issues: write
+
+env:
+   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+   FORK_BRANCH: fix/filtered-tree-connectors
+   UPSTREAM_REPOSITORY: can1357/oh-my-pi
+
+jobs:
+   rebase-build-release:
+      runs-on: ubuntu-22.04
+      steps:
+         - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+           with:
+              ref: ${{ env.FORK_BRANCH }}
+              fetch-depth: 0
+
+         - name: Resolve latest upstream release
+           id: release
+           env:
+              GH_TOKEN: ${{ github.token }}
+              REQUESTED_TAG: ${{ inputs.upstream_tag }}
+           run: |
+              tag="$REQUESTED_TAG"
+              if [ -z "$tag" ]; then
+                 tag=$(gh api "repos/$UPSTREAM_REPOSITORY/releases/latest" --jq .tag_name)
+              fi
+              case "$tag" in
+                 v[0-9]*.[0-9]*.[0-9]*) ;;
+                 *) echo "Unexpected upstream release tag: $tag" >&2; exit 1 ;;
+              esac
+              echo "upstream_tag=$tag" >> "$GITHUB_OUTPUT"
+              echo "fork_tag=${tag}-oh-your-pi.1" >> "$GITHUB_OUTPUT"
+
+         - name: Fetch and rebase onto upstream release
+           id: rebase
+           env:
+              GH_TOKEN: ${{ github.token }}
+              UPSTREAM_TAG: ${{ steps.release.outputs.upstream_tag }}
+              FORK_TAG: ${{ steps.release.outputs.fork_tag }}
+           run: |
+              git remote add upstream "https://github.com/$UPSTREAM_REPOSITORY.git"
+              git fetch upstream "refs/tags/$UPSTREAM_TAG:refs/tags/$UPSTREAM_TAG"
+
+              if git merge-base --is-ancestor "$UPSTREAM_TAG" HEAD && \
+                 gh release view "$FORK_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                 echo "already_released=true" >> "$GITHUB_OUTPUT"
+                 echo "$FORK_TAG already published; nothing to do."
+                 exit 0
+              fi
+
+              echo "already_released=false" >> "$GITHUB_OUTPUT"
+              if ! git merge-base --is-ancestor "$UPSTREAM_TAG" HEAD; then
+                 git config user.name "github-actions[bot]"
+                 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                 if ! git rebase "$UPSTREAM_TAG"; then
+                    conflicts=$(git diff --name-only --diff-filter=U | sed '/^$/d' | paste -sd ', ' -)
+                    git rebase --abort
+                    gh issue create \
+                       --repo "$GITHUB_REPOSITORY" \
+                       --title "Rebase conflict: $UPSTREAM_TAG" \
+                       --body "Automatic rebase of \`$FORK_BRANCH\` onto \`$UPSTREAM_TAG\` failed. Conflicts: ${conflicts:-unknown}. Workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+                    exit 1
+                 fi
+              fi
+
+         - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+           if: steps.rebase.outputs.already_released != 'true'
+           with:
+              bun-version: "1.3"
+
+         - uses: dtolnay/rust-toolchain@stable
+           if: steps.rebase.outputs.already_released != 'true'
+
+         - name: Install dependencies
+           if: steps.rebase.outputs.already_released != 'true'
+           run: bun install --frozen-lockfile
+
+         - name: Build native addon
+           if: steps.rebase.outputs.already_released != 'true'
+           working-directory: packages/natives
+           run: bun run build
+
+         - name: Test fork changes
+           if: steps.rebase.outputs.already_released != 'true'
+           working-directory: packages/coding-agent
+           run: bun test test/export-html-keyboard-shortcuts.test.ts test/export-html-tree-connectors.test.ts test/modes/components/tree-selector-filtered-connector.test.ts
+
+         - name: Build Linux x64 binary
+           if: steps.rebase.outputs.already_released != 'true'
+           working-directory: packages/coding-agent
+           run: bun run build
+
+         - name: Smoke binary
+           if: steps.rebase.outputs.already_released != 'true'
+           run: |
+              packages/coding-agent/dist/omp --version
+              packages/coding-agent/dist/omp --smoke-test
+
+         - name: Push rebased branch and publish release
+           if: steps.rebase.outputs.already_released != 'true'
+           env:
+              GH_TOKEN: ${{ github.token }}
+              FORK_TAG: ${{ steps.release.outputs.fork_tag }}
+              UPSTREAM_TAG: ${{ steps.release.outputs.upstream_tag }}
+           run: |
+              git push --force-with-lease origin "HEAD:$FORK_BRANCH"
+              install -m755 packages/coding-agent/dist/omp omp-linux-x64
+              gh release create "$FORK_TAG" omp-linux-x64 \
+                 --repo "$GITHUB_REPOSITORY" \
+                 --target "$(git rev-parse HEAD)" \
+                 --title "$FORK_TAG" \
+                 --notes "Automatic rebase of fork changes onto upstream $UPSTREAM_TAG."

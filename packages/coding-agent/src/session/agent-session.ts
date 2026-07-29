@@ -628,11 +628,12 @@ export class AgentSession {
 
 	#shouldHoldPowerAssertion(): boolean {
 		if (this.#promptInFlightCount > 0) return true;
-		const ownerFilter = this.#agentId ? { ownerId: this.#agentId } : undefined;
-		if (this.#asyncJobManager?.getRunningJobs(ownerFilter).some(job => !job.queued)) return true;
+		const agentId = this.#agentId;
+		if (!agentId) return false;
+		if (this.#asyncJobManager?.getRunningJobs({ ownerId: agentId }).some(job => !job.queued)) return true;
 		return this.#agentRegistry
 			.list()
-			.some(ref => ref.kind === "sub" && ref.status === "running" && ref.parentId === this.#agentId);
+			.some(ref => ref.kind === "sub" && ref.status === "running" && ref.parentId === agentId);
 	}
 
 	#syncPowerAssertion(): void {
@@ -790,7 +791,7 @@ export class AgentSession {
 
 	#resetInFlight(): void {
 		this.#promptInFlightCount = 0;
-		this.#releasePowerAssertion();
+		this.#syncPowerAssertion();
 		this.#flushPendingAgentEnd();
 		this.#drainStrandedQueuedMessages();
 	}

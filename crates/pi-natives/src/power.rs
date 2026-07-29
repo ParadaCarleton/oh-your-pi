@@ -189,6 +189,7 @@ mod platform {
 mod platform {
 	use log::debug;
 	use napi::{Error, Result};
+	use parking_lot::Mutex;
 	use zbus::{blocking::Connection, zvariant::OwnedFd};
 
 	const LOGIN1_DESTINATION: &str = "org.freedesktop.login1";
@@ -196,6 +197,12 @@ mod platform {
 	const LOGIN1_MANAGER: &str = "org.freedesktop.login1.Manager";
 	const INHIBIT_MODE: &str = "block";
 	const INHIBIT_WHO: &str = "Oh My Pi";
+
+	// The connection owns the D-Bus transport, while each assertion owns only its
+	// inhibitor fd. Reuse a healthy transport so a new assertion does not
+	// synchronously reconnect from the JavaScript thread; a failed call clears it
+	// for the next acquisition to reconnect.
+	static SYSTEM_BUS: Mutex<Option<Connection>> = Mutex::new(None);
 
 	/// Holds login1's inhibitor descriptor. Closing it releases the inhibit.
 	pub struct AssertionInner {
@@ -214,18 +221,23 @@ mod platform {
 		}
 
 		fn start(what: &str, reason: &str) -> Result<Self> {
-			let connection = Connection::system().map_err(|error| {
+			let mut system_bus = SYSTEM_BUS.lock();
+			let connection = system_bus.get_or_insert(Connection::system().map_err(|error| {
 				Error::from_reason(format!("Unable to connect to the system bus: {error}"))
-			})?;
-			let reply = connection
-				.call_method(
-					Some(LOGIN1_DESTINATION),
-					LOGIN1_PATH,
-					Some(LOGIN1_MANAGER),
-					"Inhibit",
-					&(what, INHIBIT_WHO, reason, INHIBIT_MODE),
-				)
-				.map_err(|error| Error::from_reason(format!("login1 Inhibit failed: {error}")))?;
+			})?);
+			let reply = match connection.call_method(
+				Some(LOGIN1_DESTINATION),
+				LOGIN1_PATH,
+				Some(LOGIN1_MANAGER),
+				"Inhibit",
+				&(what, INHIBIT_WHO, reason, INHIBIT_MODE),
+			) {
+				Ok(reply) => reply,
+				Err(error) => {
+					*system_bus = None;
+					return Err(Error::from_reason(format!("login1 Inhibit failed: {error}")));
+				},
+			};
 			let inhibitor = reply.body().deserialize::<OwnedFd>().map_err(|error| {
 				Error::from_reason(format!("Invalid login1 inhibitor response: {error}"))
 			})?;
@@ -371,11 +383,16 @@ impl PowerAssertion {
 		}
 		#[cfg(target_os = "linux")]
 		{
-			let _ = (user, effective_idle, system);
-			let what = if display {
-				"idle:handle-lid-switch"
-			} else {
-				"idle"
+			let _ = user;
+			let what = match (effective_idle, system, display) {
+				(true, true, true) => "idle:sleep:handle-lid-switch",
+				(true, true, false) => "idle:sleep",
+				(true, false, true) => "idle:handle-lid-switch",
+				(true, false, false) => "idle",
+				(false, true, true) => "sleep:handle-lid-switch",
+				(false, true, false) => "sleep",
+				(false, false, true) => "handle-lid-switch",
+				(false, false, false) => return Ok(Self { inners: Vec::new() }),
 			};
 			let inners = platform::AssertionInner::try_start(what, reason)
 				.into_iter()

@@ -404,9 +404,17 @@ export class SessionAdvisors {
 		}
 	}
 
-	/** Whether any advisor has a pending or in-flight review (non-zero backlog). */
+	/** Whether any advisor has a pending or in-flight review whose backlog is
+	 *  actually draining. A quota-exhausted or halted advisor requeued its
+	 *  batch but executes no review — and none resumes until an explicit reset
+	 *  (`/new`, config rebuild, session restart) — so its stale, non-draining
+	 *  backlog must not hold sleep prevention after the primary turn goes idle. */
 	hasUnsettledReviews(): boolean {
-		return this.#advisors.some(advisor => advisor.runtime.backlog > 0);
+		return this.#advisors.some(advisor => {
+			const runtime = advisor.runtime;
+			if (runtime.quotaExhausted || runtime.halted) return false;
+			return runtime.backlog > 0;
+		});
 	}
 
 	// Advisor runtime lifecycle

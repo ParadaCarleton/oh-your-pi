@@ -3639,6 +3639,14 @@ export class AgentSession {
 			}
 		}
 
+		// Unsubscribe the process-global sleep-prevention setting callback BEFORE
+		// releasing the handle: between the release below and the old unsubscribe
+		// site are `await` points (cleanupEmptyMoveSession, sessionManager.close)
+		// where another session's setting change could fire #syncPowerAssertion on
+		// this disposing session — reacquiring the handle with no later release,
+		// leaking sleep inhibition beyond disposal.
+		this.#unsubscribePowerSleepPrevention?.();
+		this.#unsubscribePowerSleepPrevention = undefined;
 		this.#unsubscribePowerAssertionActivity?.();
 		this.#unsubscribePowerAssertionActivity = undefined;
 		this.#releasePowerAssertion();
@@ -3657,10 +3665,6 @@ export class AgentSession {
 		if (this.#unsubscribeModelRoles) {
 			this.#unsubscribeModelRoles();
 			this.#unsubscribeModelRoles = undefined;
-		}
-		if (this.#unsubscribePowerSleepPrevention) {
-			this.#unsubscribePowerSleepPrevention();
-			this.#unsubscribePowerSleepPrevention = undefined;
 		}
 		this.#eventListeners = [];
 	}

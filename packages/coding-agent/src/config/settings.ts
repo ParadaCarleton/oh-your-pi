@@ -2253,6 +2253,11 @@ const SETTING_HOOKS: Partial<Record<SettingPath, SettingHook<any>>> = {
 			setWorktreesDir(undefined);
 		}
 	},
+	"power.sleepPrevention": value => {
+		if (typeof value === "string") {
+			powerSleepPreventionSignal.fire(value);
+		}
+	},
 };
 /** Fires when `provider.appendOnlyContext` changes at runtime. */
 const appendOnlyModeSignal = new SettingSignal<[value: string]>("provider.appendOnlyContext");
@@ -2293,6 +2298,17 @@ const hindsightScopeSignal = new SettingSignal("hindsight scope");
  * caller is expected to re-read the relevant settings via `Settings.get`.
  */
 export const onHindsightScopeChanged = (cb: () => void) => hindsightScopeSignal.on(cb);
+
+/** Fires when `power.sleepPrevention` changes at runtime. */
+const powerSleepPreventionSignal = new SettingSignal<[value: string]>("power.sleepPrevention");
+
+/**
+ * Subscribe to sleep-prevention mode changes. Sessions re-evaluate their power
+ * assertion so a mid-session switch to `off` releases the held handle and an
+ * upgrade (e.g. `idle` → `display`) reacquires the stronger assertion; the
+ * callback receives the new mode and callers re-read settings for the value.
+ */
+export const onPowerSleepPreventionChanged = (cb: (value: string) => void) => powerSleepPreventionSignal.on(cb);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Global Singleton

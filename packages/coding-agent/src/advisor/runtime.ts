@@ -76,6 +76,13 @@ export interface AdvisorRuntimeHost {
 	 *  recovery (credential switch, fallback chain) declined. Cleared only by
 	 *  an explicit reset (`/new`, config rebuild, session restart). */
 	notifyQuotaExhausted?(): void;
+	/**
+	 * Called whenever the advisor's pending-review backlog transitions (a delta
+	 * is queued or a review settles), so hosts that gate long-running work —
+	 * e.g. sleep prevention — can treat an in-flight review as active session
+	 * work that outlives the primary turn.
+	 */
+	onActivity?(): void;
 }
 
 /**
@@ -636,6 +643,7 @@ export class AdvisorRuntime {
 	}
 
 	#notifyWaiters(): void {
+		this.host.onActivity?.();
 		for (let i = this.#waiters.length - 1; i >= 0; i--) {
 			const w = this.#waiters[i];
 			if (this.#backlog < w.threshold) {
@@ -645,6 +653,7 @@ export class AdvisorRuntime {
 	}
 
 	#wakeAllWaiters(): void {
+		this.host.onActivity?.();
 		for (const w of [...this.#waiters]) {
 			w.finish(false);
 		}

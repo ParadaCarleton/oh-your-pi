@@ -187,6 +187,7 @@ mod platform {
 
 #[cfg(target_os = "linux")]
 mod platform {
+	use log::debug;
 	use napi::{Error, Result};
 	use parking_lot::Mutex;
 	use zbus::{blocking::Connection, zvariant::OwnedFd};
@@ -200,10 +201,13 @@ mod platform {
 	const INHIBIT_MODE: &str = "block";
 	const INHIBIT_WHO: &str = "Oh My Pi";
 
-	// The connections own their D-Bus transports, while each assertion owns only
-	// its login1 inhibitor fd and ScreenSaver cookie. Reuse healthy transports so
-	// a new assertion does not synchronously reconnect from the JavaScript thread;
-	// a failed call clears the corresponding transport for the next acquisition.
+	// The connections own their D-Bus transports, while each assertion owns
+	// only its login1 inhibitor fd and ScreenSaver cookie. Reuse healthy
+	// transports so a new assertion does not synchronously reconnect from the
+	// JavaScript thread. The system bus is dropped after a login1 call failure
+	// (login1 inhibitors are fd-backed, so reconnecting never orphans them);
+	// the shared session bus is never dropped on a ScreenSaver call error,
+	// because doing so would release every other session's still-valid cookie.
 	static SYSTEM_BUS: Mutex<Option<Connection>> = Mutex::new(None);
 	static SESSION_BUS: Mutex<Option<Connection>> = Mutex::new(None);
 
@@ -216,12 +220,26 @@ mod platform {
 
 	impl AssertionInner {
 		pub fn start(what: Option<&str>, display: bool, reason: &str) -> Result<Self> {
+			// The system-level login1 inhibitor is the load-bearing sleep
+			// prevention. Acquire it first and propagate any failure — without
+			// it there is no protection to offer.
 			let login1_inhibitor = match what {
 				Some(what) => Some(Self::start_login1(what, reason)?),
 				None => None,
 			};
+			// The desktop ScreenSaver inhibit is a best-effort supplement (it
+			// only keeps an attached display awake). On headless/SSH sessions it
+			// is unavailable, and propagating that failure would drop the login1
+			// inhibitor acquired above during unwinding — leaving the caller
+			// with no sleep prevention at all. Degrade to login1-only.
 			let screensaver_cookie = if display {
-				Some(Self::start_screensaver(reason)?)
+				match Self::start_screensaver(reason) {
+					Ok(cookie) => Some(cookie),
+					Err(error) => {
+						debug!("Unable to acquire ScreenSaver display inhibitor: {error}");
+						None
+					},
+				}
 			} else {
 				None
 			};
@@ -265,7 +283,12 @@ mod platform {
 			) {
 				Ok(reply) => reply,
 				Err(error) => {
-					*session_bus = None;
+					// A method error does not invalidate the shared transport,
+					// and dropping it here would orphan every other session's
+					// ScreenSaver cookie (the service releases inhibitors when
+					// the connection closes). Leave the connection in place;
+					// only the connection-acquisition failure above leaves it
+					// unset for the next acquisition to reconnect.
 					return Err(Error::from_reason(format!("ScreenSaver Inhibit failed: {error}")));
 				},
 			};
@@ -283,18 +306,15 @@ mod platform {
 			let Some(connection) = session_bus.as_mut() else {
 				return;
 			};
-			if connection
-				.call_method(
-					Some(SCREENSAVER_DESTINATION),
-					SCREENSAVER_PATH,
-					Some(SCREENSAVER_INTERFACE),
-					"UnInhibit",
-					&(cookie,),
-				)
-				.is_err()
-			{
-				*session_bus = None;
-			}
+			// Best-effort release: ignore errors so a failed UnInhibit never
+			// drops the shared transport out from under other sessions' cookies.
+			let _ = connection.call_method(
+				Some(SCREENSAVER_DESTINATION),
+				SCREENSAVER_PATH,
+				Some(SCREENSAVER_INTERFACE),
+				"UnInhibit",
+				&(cookie,),
+			);
 		}
 	}
 

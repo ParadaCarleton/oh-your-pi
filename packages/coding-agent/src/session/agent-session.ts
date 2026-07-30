@@ -103,7 +103,7 @@ import { type ResolvedModelRoleValue, resolveModelOverride } from "../config/mod
 import { expandPromptTemplate, type PromptTemplate } from "../config/prompt-templates";
 import { buildServiceTierByFamily } from "../config/service-tier";
 import type { Settings, SkillsSettings } from "../config/settings";
-import { onAppendOnlyModeChanged, onModelRolesChanged } from "../config/settings";
+import { onAppendOnlyModeChanged, onModelRolesChanged, onPowerSleepPreventionChanged } from "../config/settings";
 import { RawSseDebugBuffer } from "../debug/raw-sse-buffer";
 import { getFileSnapshotStore } from "../edit/file-snapshot-store";
 import type { PythonResult } from "../eval/py/executor";
@@ -410,6 +410,7 @@ export class AgentSession {
 
 	#powerAssertion: PowerAssertion | undefined;
 	#unsubscribePowerAssertionActivity: (() => void) | undefined;
+	#unsubscribePowerSleepPrevention: (() => void) | undefined;
 
 	readonly configWarnings: string[] = [];
 
@@ -628,6 +629,11 @@ export class AgentSession {
 
 	#shouldHoldPowerAssertion(): boolean {
 		if (this.#promptInFlightCount > 0) return true;
+		// Async advisor reviews run on their own runtime after the primary turn
+		// returns (the default syncBacklog:"off" queues them), so they are
+		// invisible to the in-flight/subagent signals. Count an in-flight review
+		// as active work so a long review stays protected from sleep.
+		if (this.#advisors.hasUnsettledReviews()) return true;
 		const agentId = this.#agentId;
 		if (!agentId) return false;
 		if (this.#asyncJobManager?.getUnsettledJobs({ ownerId: agentId }).some(job => !job.queued)) return true;
@@ -1185,13 +1191,6 @@ export class AgentSession {
 		this.#loopGuards = new LoopGuards(streamGuardsHost);
 		this.#agentId = config.agentId;
 		this.#agentKind = config.agentKind ?? "main";
-		const unsubscribeAsyncJobs = this.#asyncJobManager?.onChange(() => this.#syncPowerAssertion());
-		const unsubscribeSubagents = this.#agentRegistry.onChange(() => this.#syncPowerAssertion());
-		this.#unsubscribePowerAssertionActivity = () => {
-			unsubscribeAsyncJobs?.();
-			unsubscribeSubagents();
-		};
-		this.#syncPowerAssertion();
 		this.#providerSessionId = config.providerSessionId;
 		this.#inheritedProviderPromptCacheKey =
 			config.providerPromptCacheKeySource === "fork" ? this.agent.promptCacheKey : undefined;
@@ -1323,6 +1322,15 @@ export class AgentSession {
 			streamFn: config.advisorStreamFn,
 			transformProviderContext: config.transformProviderContext,
 		});
+		const unsubscribeAsyncJobs = this.#asyncJobManager?.onChange(() => this.#syncPowerAssertion());
+		const unsubscribeSubagents = this.#agentRegistry.onChange(() => this.#syncPowerAssertion());
+		const unsubscribeAdvisorActivity = this.#advisors.onChange(() => this.#syncPowerAssertion());
+		this.#unsubscribePowerAssertionActivity = () => {
+			unsubscribeAsyncJobs?.();
+			unsubscribeSubagents();
+			unsubscribeAdvisorActivity();
+		};
+		this.#syncPowerAssertion();
 
 		const maintenanceHost: SessionMaintenanceHost = {
 			agent: this.agent,
@@ -1440,6 +1448,14 @@ export class AgentSession {
 		// Re-evaluate append-only context mode when the setting changes at runtime.
 		this.#unsubscribeAppendOnly = onAppendOnlyModeChanged(_value => this.#syncAppendOnlyContext(this.model));
 		this.#unsubscribeModelRoles = onModelRolesChanged(() => this.#advisors.onModelRolesChanged());
+		this.#unsubscribePowerSleepPrevention = onPowerSleepPreventionChanged(() => {
+			// #acquirePowerAssertion no-ops while a handle already exists, so a mode
+			// change (e.g. `idle` → `display`, or any value → `off`) must release the
+			// current handle first and let #syncPowerAssertion reacquire at the new
+			// mode when activity still warrants it.
+			this.#releasePowerAssertion();
+			this.#syncPowerAssertion();
+		});
 	}
 	/** Model registry for API key resolution and model discovery */
 	get modelRegistry(): ModelRegistry {
@@ -3641,6 +3657,10 @@ export class AgentSession {
 		if (this.#unsubscribeModelRoles) {
 			this.#unsubscribeModelRoles();
 			this.#unsubscribeModelRoles = undefined;
+		}
+		if (this.#unsubscribePowerSleepPrevention) {
+			this.#unsubscribePowerSleepPrevention();
+			this.#unsubscribePowerSleepPrevention = undefined;
 		}
 		this.#eventListeners = [];
 	}

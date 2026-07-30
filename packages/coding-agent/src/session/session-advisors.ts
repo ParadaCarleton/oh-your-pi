@@ -261,6 +261,7 @@ export class SessionAdvisors {
 	#advisorInterruptImmuneTurnStart: number | undefined;
 	#pendingAdvisorCardEvents = new Set<Promise<void>>();
 	#advisorYieldQueueUnsubscribe: (() => void) | undefined;
+	#activityListeners = new Set<() => void>();
 
 	constructor(host: SessionAdvisorsHost, options: SessionAdvisorsOptions) {
 		this.#host = host;
@@ -384,6 +385,28 @@ export class SessionAdvisors {
 	/** Waits for all advisor-card persistence handlers currently in flight. */
 	async waitForPendingCardEvents(): Promise<void> {
 		await Promise.allSettled([...this.#pendingAdvisorCardEvents]);
+	}
+	/** Subscribe to advisor review-activity transitions (pending-review backlog 0 ↔ non-zero). */
+	onChange(listener: () => void): () => void {
+		this.#activityListeners.add(listener);
+		return () => {
+			this.#activityListeners.delete(listener);
+		};
+	}
+
+	#notifyActivityListeners(): void {
+		for (const listener of this.#activityListeners) {
+			try {
+				listener();
+			} catch (error) {
+				logger.warn("Advisor activity listener failed", { error: String(error) });
+			}
+		}
+	}
+
+	/** Whether any advisor has a pending or in-flight review (non-zero backlog). */
+	hasUnsettledReviews(): boolean {
+		return this.#advisors.some(advisor => advisor.runtime.backlog > 0);
 	}
 
 	// Advisor runtime lifecycle
@@ -815,6 +838,7 @@ export class SessionAdvisors {
 						"advisor",
 					);
 				},
+				onActivity: () => this.#notifyActivityListeners(),
 			});
 
 			const advisorRef: ActiveAdvisor = {

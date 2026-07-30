@@ -310,7 +310,13 @@ export class AsyncJobManager {
 		if (job.status !== "running") return false;
 		job.status = "cancelled";
 		job.abortController.abort();
-		this.#scheduleEviction(job.id);
+		// Eviction is scheduled when the run promise settles (see the IIFE's
+		// cancelled paths), not here: scheduling on cancel can evict the row —
+		// and with retentionMs: 0, evict it immediately — while the underlying
+		// process is still executing. That hides the job from getUnsettledJobs
+		// and lets its id be reused before the old run's finally deletes the
+		// new run's unsettled marker. Defer to settlement so unsettled jobs
+		// stay tracked for the full cancelled lifecycle.
 		this.#notifyActivityListeners();
 		return true;
 	}
@@ -450,7 +456,7 @@ export class AsyncJobManager {
 		for (const job of this.getRunningJobs(filter)) {
 			job.status = "cancelled";
 			job.abortController.abort();
-			this.#scheduleEviction(job.id);
+			// Eviction deferred to settlement (see cancel()).
 		}
 		this.#notifyActivityListeners();
 	}

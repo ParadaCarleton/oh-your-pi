@@ -1,15 +1,25 @@
 import { expect, it } from "bun:test";
 
 it("keeps sleep prevention aligned with session-owned activity", async () => {
-	const script = String.raw`
+	const script = `
 		import assert from "node:assert/strict";
 		import * as fs from "node:fs";
 		import * as os from "node:os";
 		import * as path from "node:path";
-		import { mock } from "bun:test";
+		import { spyOn } from "bun:test";
+		import { Agent } from "@oh-my-pi/pi-agent-core";
+		import { AssistantMessageEventStream } from "@oh-my-pi/pi-ai/utils/event-stream";
+		import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
+		import { AsyncJobManager } from "@oh-my-pi/pi-coding-agent/async";
+		import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
+		import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+		import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
+		import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+		import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+		import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
+		import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+		import { PowerAssertion } from "@oh-my-pi/pi-natives";
 
-		// Dynamic imports are deliberate: install the native mock before AgentSession loads it.
-		const native = await import("@oh-my-pi/pi-natives");
 		let acquired = 0;
 		let released = 0;
 		class MockPowerAssertion {
@@ -21,19 +31,7 @@ it("keeps sleep prevention aligned with session-owned activity", async () => {
 				released++;
 			}
 		}
-		mock.module("@oh-my-pi/pi-natives", () => ({ ...native, PowerAssertion: MockPowerAssertion }));
-
-		const { Agent } = await import("@oh-my-pi/pi-agent-core");
-		const { AssistantMessageEventStream } = await import("@oh-my-pi/pi-ai/utils/event-stream");
-		const { getBundledModel } = await import("@oh-my-pi/pi-catalog/models");
-		const { AsyncJobManager } = await import("@oh-my-pi/pi-coding-agent/async");
-		const { ModelRegistry } = await import("@oh-my-pi/pi-coding-agent/config/model-registry");
-		const { Settings } = await import("@oh-my-pi/pi-coding-agent/config/settings");
-		const { AgentRegistry } = await import("@oh-my-pi/pi-coding-agent/registry/agent-registry");
-		const { AgentSession } = await import("@oh-my-pi/pi-coding-agent/session/agent-session");
-		const { AuthStorage } = await import("@oh-my-pi/pi-coding-agent/session/auth-storage");
-		const { convertToLlm } = await import("@oh-my-pi/pi-coding-agent/session/messages");
-		const { SessionManager } = await import("@oh-my-pi/pi-coding-agent/session/session-manager");
+		const startSpy = spyOn(PowerAssertion, "start").mockImplementation(MockPowerAssertion.start);
 
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-power-assertion-"));
 		const authStorage = await AuthStorage.create(path.join(tempDir, "auth.db"));
@@ -130,8 +128,10 @@ it("keeps sleep prevention aligned with session-owned activity", async () => {
 			const job = jobs.register("task", "owned", () => jobGate.promise, { ownerId: "Main" });
 			assert.equal(acquired, 2, "an owned running job acquires the assertion");
 			jobs.cancel(job, { ownerId: "Main" });
-			assert.equal(released, 2, "ending an owned job releases the assertion");
+			assert.equal(released, 1, "a cancelled job retains the assertion until its execution settles");
 			jobGate.resolve("cancelled");
+			await jobs.waitForOwnerJobs("Main");
+			assert.equal(released, 2, "a settled cancelled job releases the assertion");
 
 			registry.register({ id: "child", displayName: "child", kind: "sub", parentId: "Main", session: null });
 			assert.equal(acquired, 3, "a running child subagent acquires the assertion");
@@ -148,10 +148,13 @@ it("keeps sleep prevention aligned with session-owned activity", async () => {
 			await abortingPrompt.catch(() => {});
 			assert.equal(released, 3, "abort retains the assertion while owned work remains active");
 			jobs.cancel(backgroundJob, { ownerId: "Main" });
-			assert.equal(released, 4, "the assertion releases when the final owned activity ends");
+			assert.equal(released, 3, "the assertion remains held while cancelled owned work settles");
 			backgroundGate.resolve("cancelled");
+			await jobs.waitForOwnerJobs("Main");
+			assert.equal(released, 4, "the assertion releases when the final owned activity settles");
 			await session.dispose();
 		} finally {
+			startSpy.mockRestore();
 			authStorage.close();
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}

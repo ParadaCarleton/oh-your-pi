@@ -630,7 +630,7 @@ export class AgentSession {
 		if (this.#promptInFlightCount > 0) return true;
 		const agentId = this.#agentId;
 		if (!agentId) return false;
-		if (this.#asyncJobManager?.getRunningJobs({ ownerId: agentId }).some(job => !job.queued)) return true;
+		if (this.#asyncJobManager?.getUnsettledJobs({ ownerId: agentId }).some(job => !job.queued)) return true;
 		return this.#agentRegistry
 			.list()
 			.some(ref => ref.kind === "sub" && ref.status === "running" && ref.parentId === agentId);

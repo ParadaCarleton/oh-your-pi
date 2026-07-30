@@ -136,6 +136,7 @@ export class AsyncJobManager {
 	}
 
 	readonly #jobs = new Map<string, AsyncJob>();
+	readonly #unsettledJobIds = new Set<string>();
 	readonly #deliveries: AsyncJobDelivery[] = [];
 	readonly #inFlightDeliveries: AsyncJobDelivery[] = [];
 	readonly #suppressedDeliveries = new Set<string>();
@@ -250,6 +251,7 @@ export class AsyncJobManager {
 				});
 			}
 		};
+		this.#unsettledJobIds.add(id);
 		job.promise = (async () => {
 			try {
 				const text = await run({
@@ -285,6 +287,9 @@ export class AsyncJobManager {
 				this.#enqueueDelivery(id, errorText);
 				this.#scheduleEviction(id);
 				this.#notifyActivityListeners();
+			} finally {
+				this.#unsettledJobIds.delete(id);
+				this.#notifyActivityListeners();
 			}
 		})();
 
@@ -316,6 +321,11 @@ export class AsyncJobManager {
 
 	getRunningJobs(filter?: AsyncJobFilter): AsyncJob[] {
 		return this.#filterJobs(this.#jobs.values(), filter).filter(job => job.status === "running");
+	}
+
+	/** Jobs whose run functions have not settled, including cancelled jobs. */
+	getUnsettledJobs(filter?: AsyncJobFilter): AsyncJob[] {
+		return this.#filterJobs(this.#jobs.values(), filter).filter(job => this.#unsettledJobIds.has(job.id));
 	}
 
 	getRecentJobs(limit = 10, filter?: AsyncJobFilter): AsyncJob[] {

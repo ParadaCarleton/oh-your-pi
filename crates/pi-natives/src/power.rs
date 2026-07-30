@@ -187,7 +187,6 @@ mod platform {
 
 #[cfg(target_os = "linux")]
 mod platform {
-	use log::debug;
 	use napi::{Error, Result};
 	use parking_lot::Mutex;
 	use zbus::{blocking::Connection, zvariant::OwnedFd};
@@ -195,32 +194,41 @@ mod platform {
 	const LOGIN1_DESTINATION: &str = "org.freedesktop.login1";
 	const LOGIN1_PATH: &str = "/org/freedesktop/login1";
 	const LOGIN1_MANAGER: &str = "org.freedesktop.login1.Manager";
+	const SCREENSAVER_DESTINATION: &str = "org.freedesktop.ScreenSaver";
+	const SCREENSAVER_PATH: &str = "/org/freedesktop/ScreenSaver";
+	const SCREENSAVER_INTERFACE: &str = "org.freedesktop.ScreenSaver";
 	const INHIBIT_MODE: &str = "block";
 	const INHIBIT_WHO: &str = "Oh My Pi";
 
-	// The connection owns the D-Bus transport, while each assertion owns only its
-	// inhibitor fd. Reuse a healthy transport so a new assertion does not
-	// synchronously reconnect from the JavaScript thread; a failed call clears it
-	// for the next acquisition to reconnect.
+	// The connections own their D-Bus transports, while each assertion owns only
+	// its login1 inhibitor fd and ScreenSaver cookie. Reuse healthy transports so
+	// a new assertion does not synchronously reconnect from the JavaScript thread;
+	// a failed call clears the corresponding transport for the next acquisition.
 	static SYSTEM_BUS: Mutex<Option<Connection>> = Mutex::new(None);
+	static SESSION_BUS: Mutex<Option<Connection>> = Mutex::new(None);
 
-	/// Holds login1's inhibitor descriptor. Closing it releases the inhibit.
+	/// Holds login1's inhibitor descriptor and the desktop ScreenSaver cookie.
+	/// Closing the descriptor and releasing the cookie removes both inhibits.
 	pub struct AssertionInner {
-		inhibitor: Option<OwnedFd>,
+		login1_inhibitor:   Option<OwnedFd>,
+		screensaver_cookie: Option<u32>,
 	}
 
 	impl AssertionInner {
-		pub fn try_start(what: &str, reason: &str) -> Option<Self> {
-			match Self::start(what, reason) {
-				Ok(inner) => Some(inner),
-				Err(error) => {
-					debug!("Unable to acquire login1 sleep inhibitor: {error}");
-					None
-				},
-			}
+		pub fn start(what: Option<&str>, display: bool, reason: &str) -> Result<Self> {
+			let login1_inhibitor = match what {
+				Some(what) => Some(Self::start_login1(what, reason)?),
+				None => None,
+			};
+			let screensaver_cookie = if display {
+				Some(Self::start_screensaver(reason)?)
+			} else {
+				None
+			};
+			Ok(Self { login1_inhibitor, screensaver_cookie })
 		}
 
-		fn start(what: &str, reason: &str) -> Result<Self> {
+		fn start_login1(what: &str, reason: &str) -> Result<OwnedFd> {
 			let mut system_bus = SYSTEM_BUS.lock();
 			let connection = system_bus.get_or_insert(Connection::system().map_err(|error| {
 				Error::from_reason(format!("Unable to connect to the system bus: {error}"))
@@ -238,14 +246,55 @@ mod platform {
 					return Err(Error::from_reason(format!("login1 Inhibit failed: {error}")));
 				},
 			};
-			let inhibitor = reply.body().deserialize::<OwnedFd>().map_err(|error| {
+			reply.body().deserialize::<OwnedFd>().map_err(|error| {
 				Error::from_reason(format!("Invalid login1 inhibitor response: {error}"))
-			})?;
-			Ok(Self { inhibitor: Some(inhibitor) })
+			})
+		}
+
+		fn start_screensaver(reason: &str) -> Result<u32> {
+			let mut session_bus = SESSION_BUS.lock();
+			let connection = session_bus.get_or_insert(Connection::session().map_err(|error| {
+				Error::from_reason(format!("Unable to connect to the session bus: {error}"))
+			})?);
+			let reply = match connection.call_method(
+				Some(SCREENSAVER_DESTINATION),
+				SCREENSAVER_PATH,
+				Some(SCREENSAVER_INTERFACE),
+				"Inhibit",
+				&(INHIBIT_WHO, reason),
+			) {
+				Ok(reply) => reply,
+				Err(error) => {
+					*session_bus = None;
+					return Err(Error::from_reason(format!("ScreenSaver Inhibit failed: {error}")));
+				},
+			};
+			reply.body().deserialize::<u32>().map_err(|error| {
+				Error::from_reason(format!("Invalid ScreenSaver inhibitor response: {error}"))
+			})
 		}
 
 		pub fn stop(&mut self) {
-			self.inhibitor.take();
+			self.login1_inhibitor.take();
+			let Some(cookie) = self.screensaver_cookie.take() else {
+				return;
+			};
+			let mut session_bus = SESSION_BUS.lock();
+			let Some(connection) = session_bus.as_mut() else {
+				return;
+			};
+			if connection
+				.call_method(
+					Some(SCREENSAVER_DESTINATION),
+					SCREENSAVER_PATH,
+					Some(SCREENSAVER_INTERFACE),
+					"UnInhibit",
+					&(cookie,),
+				)
+				.is_err()
+			{
+				*session_bus = None;
+			}
 		}
 	}
 
@@ -331,9 +380,9 @@ mod platform {
 
 /// Long-lived cross-platform power assertion.
 ///
-/// macOS uses `IOKit`, Linux holds a login1 inhibitor file descriptor, and
-/// Windows holds thread-affine execution state until the handle is stopped or
-/// dropped. Other platforms return a no-op handle.
+/// macOS uses `IOKit`, Linux holds login1 and desktop ScreenSaver inhibitors,
+/// and Windows holds thread-affine execution state until the handle is stopped
+/// or dropped. Other platforms return a no-op handle.
 #[napi(js_name = "PowerAssertion")]
 pub struct PowerAssertion {
 	#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
@@ -384,20 +433,13 @@ impl PowerAssertion {
 		#[cfg(target_os = "linux")]
 		{
 			let _ = user;
-			let what = match (effective_idle, system, display) {
-				(true, true, true) => "idle:sleep:handle-lid-switch",
-				(true, true, false) => "idle:sleep",
-				(true, false, true) => "idle:handle-lid-switch",
-				(true, false, false) => "idle",
-				(false, true, true) => "sleep:handle-lid-switch",
-				(false, true, false) => "sleep",
-				(false, false, true) => "handle-lid-switch",
-				(false, false, false) => return Ok(Self { inners: Vec::new() }),
+			let what = match (effective_idle, system) {
+				(true, true) => Some("idle:sleep"),
+				(true, false) => Some("idle"),
+				(false, true) => Some("sleep"),
+				(false, false) => None,
 			};
-			let inners = platform::AssertionInner::try_start(what, reason)
-				.into_iter()
-				.collect();
-			Ok(Self { inners })
+			Ok(Self { inners: vec![platform::AssertionInner::start(what, display, reason)?] })
 		}
 		#[cfg(target_os = "windows")]
 		{
@@ -406,7 +448,8 @@ impl PowerAssertion {
 			};
 
 			let _ = user;
-			let mut flags = ES_CONTINUOUS;
+			// Windows has no separate system-sleep assertion: `ES_SYSTEM_REQUIRED`
+			// is the strongest available equivalent for both `idle` and `system`.
 			if effective_idle || system {
 				flags |= ES_SYSTEM_REQUIRED;
 			}

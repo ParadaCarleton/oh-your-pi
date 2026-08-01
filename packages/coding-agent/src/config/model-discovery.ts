@@ -10,6 +10,7 @@ import type { Api, Model, RemoteCompactionConfig } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import {
 	getBundledModelReferenceIndex,
+	inheritReferenceThinking,
 	isQwenModelId,
 	resolveModelReference,
 	stripBracketedModelIdAffixes,
@@ -59,6 +60,33 @@ async function withTimeoutSignal<T>(timeoutMs: number, fn: (signal: AbortSignal)
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/** Generous discovery budget for a non-loopback (remote / LAN) inference host. */
+const REMOTE_DISCOVERY_TIMEOUT_MS = 10_000;
+
+/**
+ * Pick a discovery-probe timeout for a local-engine base URL.
+ *
+ * The implicit `127.0.0.1` default probe keeps a tight `loopbackMs` cap so a
+ * busy or foreign service on the default port never stalls startup. But that
+ * cap is far too short for a host reached over the network: a user who points
+ * `LLAMA_CPP_BASE_URL` / `OLLAMA_BASE_URL` / `OLLAMA_HOST` at a remote or LAN
+ * machine has real round-trip latency, and a 250ms cap made that server look
+ * empty (issue #7087). Anything that is not strictly loopback therefore gets
+ * {@link REMOTE_DISCOVERY_TIMEOUT_MS}.
+ */
+export function discoveryProbeTimeoutMs(baseUrl: string, loopbackMs: number): number {
+	let hostname: string;
+	try {
+		hostname = new URL(baseUrl).hostname;
+	} catch {
+		return loopbackMs;
+	}
+	hostname = hostname.replace(/^\[/, "").replace(/\]$/, "");
+	const isLoopback =
+		hostname === "localhost" || hostname === "0.0.0.0" || hostname === "::1" || /^127\./.test(hostname);
+	return isLoopback ? loopbackMs : REMOTE_DISCOVERY_TIMEOUT_MS;
 }
 
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
@@ -390,7 +418,7 @@ async function discoverOllamaModelMetadata(
 ): Promise<OllamaDiscoveredModelMetadata | null> {
 	const showUrl = `${endpoint}/api/show`;
 	try {
-		const payload = await withTimeoutSignal(150, async signal => {
+		const payload = await withTimeoutSignal(discoveryProbeTimeoutMs(endpoint, 150), async signal => {
 			const response = await ctx.fetch(showUrl, {
 				method: "POST",
 				headers: { ...(headers ?? {}), "Content-Type": "application/json" },
@@ -443,7 +471,7 @@ export async function discoverOllamaModels(
 	const endpoint = normalizeOllamaBaseUrl(providerConfig.baseUrl);
 	const tagsUrl = `${endpoint}/api/tags`;
 	const headers = { ...(providerConfig.headers ?? {}) };
-	const payload = await withTimeoutSignal(250, async signal => {
+	const payload = await withTimeoutSignal(discoveryProbeTimeoutMs(endpoint, 250), async signal => {
 		const response = await ctx.fetch(tagsUrl, {
 			headers,
 			signal,
@@ -490,7 +518,7 @@ async function discoverLlamaCppServerMetadata(
 ): Promise<LlamaCppDiscoveredServerMetadata | null> {
 	const propsUrl = `${toLlamaCppNativeBaseUrl(baseUrl)}/props`;
 	try {
-		const payload = await withTimeoutSignal(150, async signal => {
+		const payload = await withTimeoutSignal(discoveryProbeTimeoutMs(baseUrl, 150), async signal => {
 			const response = await ctx.fetch(propsUrl, {
 				headers,
 				signal,
@@ -566,7 +594,7 @@ export async function discoverLlamaCppModels(
 	let headers = baseHeaders;
 	const attempt = async (h: Record<string, string>) => {
 		const [payload, metadata] = await Promise.all([
-			withTimeoutSignal(250, async signal => {
+			withTimeoutSignal(discoveryProbeTimeoutMs(baseUrl, 250), async signal => {
 				const response = await ctx.fetch(modelsUrl, {
 					headers: h,
 					signal,
@@ -640,7 +668,7 @@ export async function discoverLlamaCppModelRuntimeMetadata(
 	const baseHeaders: Record<string, string> = { ...(model.headers ?? {}) };
 	const attempt = async (headers: Record<string, string>) => {
 		const [entries, serverMetadata] = await Promise.all([
-			withTimeoutSignal(250, async signal => {
+			withTimeoutSignal(discoveryProbeTimeoutMs(nativeBaseUrl, 250), async signal => {
 				const response = await ctx.fetch(modelsUrl, {
 					headers,
 					signal,
@@ -752,7 +780,7 @@ export async function discoverOpenAIModelsList(
 				provider: providerConfig.provider,
 				baseUrl,
 				reasoning: reference?.reasoning ?? false,
-				thinking: reference?.thinking,
+				thinking: inheritReferenceThinking(undefined, reference, providerConfig.provider),
 				input: nativeMetadataForModel?.input ?? reference?.input ?? ["text"],
 				...(providerConfig.discovery.type === "lm-studio" ? { imageInputDecoder: "stb" as const } : {}),
 				// Proxy/gateway pricing is provider-specific and rarely matches
@@ -907,7 +935,7 @@ export async function discoverProxyModels(
 				provider: providerConfig.provider,
 				baseUrl,
 				reasoning: reference?.reasoning ?? false,
-				thinking: reference?.thinking,
+				thinking: inheritReferenceThinking(undefined, reference, providerConfig.provider),
 				input: reference?.input ?? ["text"],
 				// Proxy pricing is provider-specific and usually does not match
 				// upstream bundled catalogs, so keep costs local-unknown even when

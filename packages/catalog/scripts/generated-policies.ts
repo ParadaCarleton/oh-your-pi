@@ -18,7 +18,10 @@ import { isMimoModelIdOrName } from "../src/identity/family";
 import { getLongestModelLikeIdSegment } from "../src/identity/id";
 import { buildModelReferenceIndex, resolveModelReference } from "../src/identity/reference";
 import { resolveModelThinking } from "../src/model-thinking";
-import { resolveWaferServerlessThinkingFormat } from "../src/provider-models/openai-compat";
+import {
+	ALIBABA_TOKEN_PLAN_STATIC_MODELS,
+	resolveWaferServerlessThinkingFormat,
+} from "../src/provider-models/openai-compat";
 import type { Api, Model, ModelSpec } from "../src/types";
 import { isVariantCollapsedSpec } from "../src/variant-collapse";
 import { buildCanonicalModelIndex, buildCanonicalReferenceData } from "./equivalence";
@@ -47,6 +50,20 @@ export const CLOUDFLARE_FALLBACK_MODEL: ModelSpec<"anthropic-messages"> = {
 	contextWindow: 200000,
 	maxTokens: 64000,
 };
+
+/**
+ * `stencil.so` currently lists `jp.anthropic.claude-opus-5`, but AWS's own
+ * Bedrock model card documents only `anthropic.claude-opus-5` plus the `us.`,
+ * `eu.`, `au.`, and `global.` Geo/Global inference-profile IDs under
+ * Programmatic Access; Japan regions are marked unsupported for Geo inference
+ * in the same card's regional-availability table. Bedrock rejects an
+ * undocumented inference-profile ID outright, so drop this specific upstream
+ * row rather than ship a selector that 4xxs on first use (PR #6591 review).
+ * https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html
+ */
+export function dropUnsupportedBedrockGeoIds(models: readonly ModelSpec[]): ModelSpec[] {
+	return models.filter(model => !(model.provider === "amazon-bedrock" && model.id === "jp.anthropic.claude-opus-5"));
+}
 
 const CODEX_GPT_5_4_PRIORITY_BY_VARIANT: Partial<Record<OpenAIVariant, number>> = {
 	base: 0,
@@ -78,11 +95,12 @@ export function applyGeneratedModelPolicies(models: ModelSpec<Api>[]): void {
  * Recompute `thinking` from the canonical deriver, replacing any baked value.
  * Mirrors `buildModel`'s trust-or-derive resolution with trust disabled: the
  * generator is the authority that produces the trusted values. Collapsed
- * effort-tier variants are exempt — their collapse table authored the
- * routing/off-suppression metadata and the deriver cannot reproduce it.
+ * effort-tier variants and provider-authored wire ladders are exempt because
+ * the generic deriver cannot reproduce that routing metadata.
  */
 export function rebakeModelThinking(model: ModelSpec<Api>): void {
 	if (isVariantCollapsedSpec(model)) return;
+	if (model.provider === "alibaba-token-plan" && model.id === "qwen3.8-max-preview" && model.thinking) return;
 	const requiresProviderAuthoredEffort =
 		model.provider === "umans" && (model.thinking?.requiresEffort === true || model.id === "umans-kimi-k2.7");
 	const thinking = resolveModelThinking({ ...model, thinking: undefined }, buildCompat(model));
@@ -208,6 +226,10 @@ function applyGeneratedModelPolicy(model: ModelSpec<Api>): void {
 		model.contextWindow = copilotLimits.contextWindow;
 		model.maxTokens = copilotLimits.maxTokens;
 	}
+	if (model.provider === "alibaba-token-plan") {
+		const reference = ALIBABA_TOKEN_PLAN_STATIC_MODELS.find(candidate => candidate.id === model.id);
+		if (reference) model.name = reference.name;
+	}
 
 	if (model.provider === "ollama-cloud") {
 		model.omitMaxOutputTokens = true;
@@ -299,7 +321,7 @@ function applyGeneratedModelPolicy(model: ModelSpec<Api>): void {
 }
 
 function applyAnthropicCatalogPolicy(model: ModelSpec<Api>, parsedModel: AnthropicModel): void {
-	// Claude Opus 4.5: models.dev reports 3x the correct cache pricing.
+	// Claude Opus 4.5: stencil.so reports 3x the correct cache pricing.
 	if (model.provider === "anthropic" && parsedModel.kind === "opus" && semverEqual(parsedModel.version, "4.5")) {
 		model.cost.cacheRead = 0.5;
 		model.cost.cacheWrite = 6.25;
@@ -314,7 +336,7 @@ function applyAnthropicCatalogPolicy(model: ModelSpec<Api>, parsedModel: Anthrop
 	}
 
 	// Claude Fable/Mythos 5: Anthropic's /v1/models omits token limits and
-	// pricing, and models.dev lags new releases. Pin authoritative values from
+	// pricing, and stencil.so lags new releases. Pin authoritative values from
 	// the model card (1M context / 128k output) and pricing docs ($10 in / $50
 	// out per MTok).
 	if (model.provider === "anthropic" && isFableOrMythos(parsedModel.kind)) {

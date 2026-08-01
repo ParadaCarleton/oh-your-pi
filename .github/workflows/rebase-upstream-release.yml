@@ -67,18 +67,25 @@ jobs:
               fi
 
               echo "already_released=false" >> "$GITHUB_OUTPUT"
-              if ! git merge-base --is-ancestor "$UPSTREAM_TAG" HEAD; then
-                 git config user.name "github-actions[bot]"
-                 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-                 if ! git rebase "$UPSTREAM_TAG"; then
-                    conflicts=$(git diff --name-only --diff-filter=U | sed '/^$/d' | paste -sd ', ' -)
-                    git rebase --abort
-                    gh issue create \
-                       --repo "$GITHUB_REPOSITORY" \
-                       --title "Rebase conflict: $UPSTREAM_TAG" \
-                       --body "Automatic rebase of \`$FORK_BRANCH\` onto \`$UPSTREAM_TAG\` failed. Conflicts: ${conflicts:-unknown}. Workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-                    exit 1
-                 fi
+              # Do not rebase the branch commit-by-commit. Fork workflow files
+              # are deliberately different from OMP's, and a workflow-only
+              # commit (or a workflow change mixed into another commit) can
+              # make an ordinary rebase stop on a conflict before we get a
+              # chance to restore them. Instead, turn the fork delta into a
+              # patch, reset to OMP, and apply only the application changes.
+              patch_file="$RUNNER_TEMP/fork-application.patch"
+              git diff --binary "$UPSTREAM_TAG" HEAD -- \
+                 . ':(exclude).github/workflows' > "$patch_file"
+              git reset --hard "$UPSTREAM_TAG"
+
+              if [ -s "$patch_file" ] && ! git apply --3way --index "$patch_file"; then
+                 conflicts=$(git diff --name-only --diff-filter=U | sed '/^$/d' | paste -sd ', ' -)
+                 git reset --hard "$UPSTREAM_TAG"
+                 gh issue create \
+                    --repo "$GITHUB_REPOSITORY" \
+                    --title "Rebase conflict: $UPSTREAM_TAG" \
+                    --body "Automatic application of \`$FORK_BRANCH\` onto \`$UPSTREAM_TAG\` failed. Conflicts: ${conflicts:-unknown}. Workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+                 exit 1
               fi
 
               # GITHUB_TOKEN cannot push changes to workflow files. Keep fork

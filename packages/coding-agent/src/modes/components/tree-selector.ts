@@ -246,7 +246,7 @@ class TreeList implements Component {
 			const connectorDisplayed = showConnector && !isVirtualRootChild;
 			// When connector is displayed, add a gutter entry at the connector's position
 			// Connector is at position (displayIndent - 1), so gutter should be there too
-			const currentDisplayIndent = this.#multipleRoots ? Math.max(0, indent - 1) : indent;
+			const currentDisplayIndent = multipleRoots ? Math.max(0, indent - 1) : indent;
 			const connectorPosition = Math.max(0, currentDisplayIndent - 1);
 			const childGutters: GutterInfo[] = connectorDisplayed
 				? [...gutters, { position: connectorPosition, show: !isLast }]
@@ -270,6 +270,89 @@ class TreeList implements Component {
 		return result;
 	}
 
+	/**
+	 * Contract hidden nodes out of the displayed tree and recompute connector
+	 * metadata against the visible ancestry. Keeping metadata from the full tree
+	 * leaves orphan gutters when a branch head is filtered out.
+	 */
+	#projectFilteredNodes(visibleNodes: FlatNode[]): FlatNode[] {
+		interface ProjectedNode {
+			flatNode: FlatNode;
+			children: ProjectedNode[];
+		}
+
+		const visibleIds = new Set(visibleNodes.map(flatNode => flatNode.node.entry.id));
+		const projectedById = new Map<string, ProjectedNode>();
+		const nearestVisibleById = new Map<string, string>();
+		const roots: ProjectedNode[] = [];
+
+		// #flatNodes is pre-order, so the nearest visible ancestor of each
+		// parent is already known when its children are visited.
+		for (const flatNode of this.#flatNodes) {
+			const id = flatNode.node.entry.id;
+			const parentId = flatNode.node.entry.parentId;
+			const visibleParentId = parentId ? nearestVisibleById.get(parentId) : undefined;
+			if (!visibleIds.has(id)) {
+				if (visibleParentId) nearestVisibleById.set(id, visibleParentId);
+				continue;
+			}
+
+			const projected = { flatNode, children: [] };
+			projectedById.set(id, projected);
+			const parent = visibleParentId ? projectedById.get(visibleParentId) : undefined;
+			if (parent) {
+				parent.children.push(projected);
+			} else {
+				roots.push(projected);
+			}
+			nearestVisibleById.set(id, id);
+		}
+
+		const result: FlatNode[] = [];
+		const multipleRoots = roots.length > 1;
+		this.#multipleRoots = multipleRoots;
+		type StackItem = [ProjectedNode, number, boolean, boolean, boolean, GutterInfo[], boolean];
+		const stack: StackItem[] = [];
+		for (let i = roots.length - 1; i >= 0; i--) {
+			stack.push([
+				roots[i],
+				multipleRoots ? 1 : 0,
+				multipleRoots,
+				multipleRoots,
+				i === roots.length - 1,
+				[],
+				multipleRoots,
+			]);
+		}
+
+		while (stack.length > 0) {
+			const [projected, indent, justBranched, showConnector, isLast, gutters, isVirtualRootChild] = stack.pop()!;
+			result.push({ ...projected.flatNode, indent, showConnector, isLast, gutters, isVirtualRootChild });
+
+			const multipleChildren = projected.children.length > 1;
+			const childIndent = multipleChildren || (justBranched && indent > 0) ? indent + 1 : indent;
+			const connectorDisplayed = showConnector && !isVirtualRootChild;
+			const displayIndent = multipleRoots ? Math.max(0, indent - 1) : indent;
+			const childGutters = connectorDisplayed
+				? [...gutters, { position: Math.max(0, displayIndent - 1), show: !isLast }]
+				: gutters;
+
+			for (let i = projected.children.length - 1; i >= 0; i--) {
+				stack.push([
+					projected.children[i],
+					childIndent,
+					multipleChildren,
+					multipleChildren,
+					i === projected.children.length - 1,
+					childGutters,
+					false,
+				]);
+			}
+		}
+
+		return result;
+	}
+
 	#applyFilter(): void {
 		// Update lastSelectedId only when we have a valid selection (non-empty list)
 		// This preserves the selection when switching through empty filter results
@@ -279,7 +362,7 @@ class TreeList implements Component {
 
 		const searchTokens = this.#searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
 
-		this.#filteredNodes = this.#flatNodes.filter(flatNode => {
+		const visibleNodes = this.#flatNodes.filter(flatNode => {
 			const entry = flatNode.node.entry;
 			const isCurrentLeaf = entry.id === this.currentLeafId;
 
@@ -337,6 +420,7 @@ class TreeList implements Component {
 
 			return true;
 		});
+		this.#filteredNodes = this.#projectFilteredNodes(visibleNodes);
 
 		// Try to preserve cursor on the same node, or find nearest visible ancestor
 		if (this.#lastSelectedId) {

@@ -63,7 +63,13 @@ describe("filtered tree connector projection", () => {
 		root.children.push(sideBranch, hiddenActiveHead);
 		hiddenActiveHead.children.push(aborted);
 
-		const selector = new TreeSelectorComponent([root], aborted.entry.id, 20, () => {}, () => {});
+		const selector = new TreeSelectorComponent(
+			[root],
+			aborted.entry.id,
+			20,
+			() => {},
+			() => {},
+		);
 		const rows = selector.render(120).map(line => Bun.stripANSI(line));
 		const abortedRow = rows.find(line => line.includes("assistant: Operation aborted"));
 		const sideRow = rows.find(line => line.includes("[hub]"));

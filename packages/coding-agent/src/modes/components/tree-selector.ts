@@ -314,7 +314,15 @@ class TreeList implements Component {
 		type StackItem = [ProjectedNode, number, boolean, boolean, boolean, GutterInfo[], boolean];
 		const stack: StackItem[] = [];
 		for (let i = roots.length - 1; i >= 0; i--) {
-			stack.push([roots[i], multipleRoots ? 1 : 0, multipleRoots, multipleRoots, i === roots.length - 1, [], multipleRoots]);
+			stack.push([
+				roots[i],
+				multipleRoots ? 1 : 0,
+				multipleRoots,
+				multipleRoots,
+				i === roots.length - 1,
+				[],
+				multipleRoots,
+			]);
 		}
 
 		while (stack.length > 0) {

@@ -56,7 +56,7 @@ function renderTreePrefixes(entries: unknown[], leafId: string): Map<string, str
 	);
 
 	return new Map(
-		Array.from(document.querySelectorAll<HTMLElement>(".tree-node")).map(node => [
+		Array.from(document.querySelectorAll(".tree-node")).map((node: any) => [
 			node.dataset.id ?? "",
 			node.querySelector(".tree-prefix")?.textContent ?? "",
 		]),

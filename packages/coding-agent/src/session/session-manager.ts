@@ -2247,6 +2247,101 @@ export class SessionManager {
 	}
 
 	/**
+	 * Prune all "empty" branches (ones with no AI assistant output/messages).
+	 * An entry is kept if it is on the active path, or is an assistant message,
+	 * or has a kept descendant. A label entry is kept if its target is kept.
+	 * Returns the number of pruned entries.
+	 */
+	pruneEmptyBranches(): number {
+		const kept = new Set<string>();
+
+		// 1. Keep the active path (path from root to active leaf)
+		const activePath = this.getBranch();
+		for (const entry of activePath) {
+			kept.add(entry.id);
+		}
+
+		// 2. Keep conversational branches with assistant messages
+		const conversationalParents = new Set<string>();
+		for (const entry of this.#entries) {
+			if (
+				entry.type === "message" ||
+				entry.type === "compaction" ||
+				entry.type === "branch_summary" ||
+				entry.type === "custom_message"
+			) {
+				let parentId = entry.parentId;
+				while (parentId) {
+					const parent = this.#index.get(parentId);
+					if (!parent) break;
+					if (
+						parent.type === "message" ||
+						parent.type === "compaction" ||
+						parent.type === "branch_summary" ||
+						parent.type === "custom_message"
+					) {
+						conversationalParents.add(parent.id);
+						break;
+					}
+					parentId = parent.parentId;
+				}
+			}
+		}
+
+		for (const entry of this.#entries) {
+			const isConversational =
+				entry.type === "message" ||
+				entry.type === "compaction" ||
+				entry.type === "branch_summary" ||
+				entry.type === "custom_message";
+			if (isConversational && !conversationalParents.has(entry.id)) {
+				const path = this.getBranch(entry.id);
+				const hasAssistant = path.some(e => e.type === "message" && e.message.role === "assistant");
+				if (hasAssistant) {
+					for (const p of path) {
+						kept.add(p.id);
+					}
+				}
+			}
+		}
+
+		// 3. Keep bookkeeping/metadata entries if their parentId is kept (except labels, which are kept if their targetId is kept)
+		for (const entry of this.#entries) {
+			const isConversational =
+				entry.type === "message" ||
+				entry.type === "compaction" ||
+				entry.type === "branch_summary" ||
+				entry.type === "custom_message";
+			if (isConversational) {
+				continue;
+			}
+			if (entry.type === "label") {
+				if (kept.has(entry.targetId)) {
+					kept.add(entry.id);
+				}
+			} else if (entry.parentId && kept.has(entry.parentId)) {
+				kept.add(entry.id);
+			}
+		}
+
+		const oldLength = this.#entries.length;
+		const activeLeafId = this.#index.leafId();
+
+		this.#entries = this.#entries.filter(entry => kept.has(entry.id));
+		this.#index.rebuild(this.#entries);
+		this.#setLeaf(activeLeafId);
+
+		const prunedCount = oldLength - this.#entries.length;
+		if (prunedCount > 0) {
+			this.#fileIsCurrent = false;
+			this.#rewriteRequired = true;
+			this.#atomicRewriteDirty = true;
+		}
+
+		return prunedCount;
+	}
+
+	/**
 	 * Move the leaf to an earlier entry so the next append forms a new branch.
 	 * Existing entries are never modified or deleted.
 	 */

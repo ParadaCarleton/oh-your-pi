@@ -4225,6 +4225,15 @@ export class AgentSession {
 		this.#maintenance.abortCompaction();
 	}
 
+	/** Prune all empty branches (ones with no AI assistant messages) from the session history. */
+	async pruneEmptyBranches(): Promise<number> {
+		const count = this.sessionManager.pruneEmptyBranches();
+		if (count > 0) {
+			await this.sessionManager.rewriteEntries();
+		}
+		return count;
+	}
+
 	/** Trigger idle compaction through the automatic maintenance flow. */
 	async runIdleCompaction(): Promise<void> {
 		await this.#maintenance.runIdleCompaction();

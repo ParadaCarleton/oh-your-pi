@@ -56,10 +56,13 @@ function renderTreePrefixes(entries: unknown[], leafId: string): Map<string, str
 	);
 
 	return new Map(
-		Array.from(document.querySelectorAll<HTMLElement>(".tree-node")).map(node => [
-			node.dataset.id ?? "",
-			node.querySelector(".tree-prefix")?.textContent ?? "",
-		]),
+		Array.from(document.querySelectorAll(".tree-node")).map(node => {
+			const n = node as unknown as {
+				dataset: Record<string, string | undefined>;
+				querySelector(selector: string): { textContent: string | null } | null;
+			};
+			return [n.dataset.id ?? "", n.querySelector(".tree-prefix")?.textContent ?? ""];
+		}),
 	);
 }
 

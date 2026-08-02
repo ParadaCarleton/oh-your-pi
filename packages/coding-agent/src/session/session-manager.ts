@@ -2247,6 +2247,96 @@ export class SessionManager {
 	}
 
 	/**
+	 * Prune all "empty" branches (ones with no AI assistant output/messages).
+	 *
+	 * A conversational entry is kept when an assistant message sits anywhere on
+	 * its chain — above it (an ancestor) or below it (somewhere in its subtree).
+	 * Bookkeeping entries are kept when they lead to a kept entry or sit on the
+	 * active path; a label is kept when its target is kept. Metadata stranded at
+	 * the head of a pruned branch goes with it, so a pruned branch leaves no
+	 * dangling node behind in the tree. The active path is always kept, so
+	 * pruning can never delete the conversation you are in.
+	 *
+	 * Runs in linear tree passes — no per-entry ancestor walks — so it stays
+	 * usable on deep sessions. Returns the number of pruned entries, and rewrites
+	 * the session file when anything was pruned.
+	 */
+	async pruneEmptyBranches(): Promise<number> {
+		const isConversational = (entry: SessionEntry): boolean =>
+			entry.type === "message" ||
+			entry.type === "compaction" ||
+			entry.type === "branch_summary" ||
+			entry.type === "custom_message";
+		const isAssistant = (entry: SessionEntry): boolean =>
+			entry.type === "message" && entry.message.role === "assistant";
+
+		const kept = new Set<string>();
+		for (const entry of this.getBranch()) kept.add(entry.id);
+
+		const roots = this.getTree();
+
+		// Pass 1 (pre-order): does an assistant message sit at or above this entry?
+		const assistantAbove = new Set<string>();
+		const descent: Array<{ node: SessionTreeNode; above: boolean }> = roots.map(node => ({ node, above: false }));
+		while (descent.length > 0) {
+			const { node, above } = descent.pop() as { node: SessionTreeNode; above: boolean };
+			const carried = above || isAssistant(node.entry);
+			if (carried) assistantAbove.add(node.entry.id);
+			for (const child of node.children) descent.push({ node: child, above: carried });
+		}
+
+		// Pass 2 (post-order): does an assistant message sit at or below this entry?
+		// Children are visited first, so a node's verdict only reads settled state.
+		const assistantBelow = new Set<string>();
+		const preOrder: SessionTreeNode[] = [];
+		const stack = [...roots];
+		while (stack.length > 0) {
+			const node = stack.pop() as SessionTreeNode;
+			preOrder.push(node);
+			for (const child of node.children) stack.push(child);
+		}
+		for (let i = preOrder.length - 1; i >= 0; i--) {
+			const node = preOrder[i] as SessionTreeNode;
+			const id = node.entry.id;
+			if (isAssistant(node.entry) || node.children.some(child => assistantBelow.has(child.entry.id))) {
+				assistantBelow.add(id);
+			}
+			if (isConversational(node.entry)) {
+				if (assistantAbove.has(id) || assistantBelow.has(id)) kept.add(id);
+			} else if (node.children.some(child => kept.has(child.entry.id))) {
+				// Bookkeeping entry on the path to something we keep.
+				kept.add(id);
+			}
+		}
+
+		// Labels live outside the parent chain: they follow their target.
+		for (const entry of this.#entries) {
+			if (entry.type === "label" && kept.has(entry.targetId)) kept.add(entry.id);
+		}
+
+		const oldLength = this.#entries.length;
+		const activeLeafId = this.#index.leafId();
+
+		this.#entries = this.#entries.filter(entry => kept.has(entry.id));
+		this.#index.rebuild(this.#entries);
+		this.#setLeaf(activeLeafId);
+
+		const prunedCount = oldLength - this.#entries.length;
+		if (prunedCount > 0) {
+			// Deleting entries can only be published by rewriting the whole file:
+			// the append path never removes lines, and close() marks the file
+			// current without rewriting, so without this the prune would be lost
+			// on reload.
+			this.#fileIsCurrent = false;
+			this.#rewriteRequired = true;
+			this.#atomicRewriteDirty = true;
+			await this.#rewriteAtomically();
+		}
+
+		return prunedCount;
+	}
+
+	/**
 	 * Move the leaf to an earlier entry so the next append forms a new branch.
 	 * Existing entries are never modified or deleted.
 	 */

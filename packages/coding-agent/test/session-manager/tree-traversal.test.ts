@@ -1,6 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import type { CustomEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { TempDir } from "@oh-my-pi/pi-utils";
 import { assistantMsg, userMsg } from "../utilities";
 
 describe("SessionManager append and tree traversal", () => {
@@ -472,5 +473,150 @@ describe("createBranchedSession", () => {
 		const entries = session.getEntries();
 		expect(entries).toHaveLength(4);
 		expect(entries.map(e => e.id)).toEqual([id1, id2, id4, id5]);
+	});
+});
+
+describe("pruneEmptyBranches", () => {
+	it("prunes empty abandoned branches and keeps active path and branches with assistant messages", async () => {
+		const session = SessionManager.inMemory();
+
+		// Active branch: Root (user) -> Assistant -> user1 (active, no assistant response yet)
+		const idRoot = session.appendMessage(userMsg("Root"));
+		const idAsst = session.appendMessage(assistantMsg("Assistant"));
+		const idUser1 = session.appendMessage(userMsg("user1")); // active leaf
+
+		// Abandoned empty branch (no assistant messages): Root -> user2
+		session.branch(idRoot);
+		const idUser2 = session.appendMessage(userMsg("user2"));
+
+		// Abandoned non-empty branch (has assistant message): Root -> user3 -> asst3 -> user3_sub
+		session.branch(idRoot);
+		const idUser3 = session.appendMessage(userMsg("user3"));
+		const idAsst3 = session.appendMessage(assistantMsg("asst3"));
+		const idUser3Sub = session.appendMessage(userMsg("user3_sub"));
+
+		// Add a label to a kept entry
+		const labelId1 = session.appendLabelChange(idAsst3, "milestone");
+
+		// Add a label to an empty/prunable entry
+		const labelId2 = session.appendLabelChange(idUser2, "useless");
+
+		// Active leaf is still user1
+		session.branch(idUser1);
+
+		const prunedCount = await session.pruneEmptyBranches();
+		expect(prunedCount).toBe(2); // user2 and labelId2 should be pruned!
+
+		const entries = session.getEntries();
+		const entryIds = entries.map(e => e.id);
+
+		// Kept entries
+		expect(entryIds).toContain(idRoot);
+		expect(entryIds).toContain(idAsst);
+		expect(entryIds).toContain(idUser1);
+		expect(entryIds).toContain(idUser3);
+		expect(entryIds).toContain(idAsst3);
+		expect(entryIds).toContain(idUser3Sub);
+		expect(entryIds).toContain(labelId1);
+
+		// Pruned entries
+		expect(entryIds).not.toContain(idUser2);
+		expect(entryIds).not.toContain(labelId2);
+	});
+
+	it("never prunes the active branch, even with no assistant message anywhere", async () => {
+		const session = SessionManager.inMemory();
+		session.appendMessage(userMsg("only"));
+		session.appendMessage(userMsg("still talking"));
+
+		expect(await session.pruneEmptyBranches()).toBe(0);
+		expect(session.getEntries()).toHaveLength(2);
+	});
+
+	it("keeps a branch whose only assistant message is below the fork", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idAsst = session.appendMessage(assistantMsg("answer"));
+
+		// Abandoned branch: two user turns before the assistant finally replies.
+		session.branch(idRoot);
+		const idDeepUser = session.appendMessage(userMsg("retry"));
+		const idDeepUser2 = session.appendMessage(userMsg("retry harder"));
+		const idDeepAsst = session.appendMessage(assistantMsg("late answer"));
+		session.branch(idAsst);
+
+		expect(await session.pruneEmptyBranches()).toBe(0);
+		const ids = session.getEntries().map(e => e.id);
+		expect(ids).toContain(idDeepUser);
+		expect(ids).toContain(idDeepUser2);
+		expect(ids).toContain(idDeepAsst);
+	});
+
+	it("drops bookkeeping entries on a pruned branch but keeps them on a kept one", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		session.appendMessage(assistantMsg("answer"));
+		const idKeptThinking = session.appendThinkingLevelChange("high");
+
+		session.branch(idRoot);
+		const idDoomedThinking = session.appendThinkingLevelChange("low");
+		const idDoomedUser = session.appendMessage(userMsg("abandoned"));
+		session.branch(idKeptThinking);
+
+		expect(await session.pruneEmptyBranches()).toBe(2);
+		const ids = session.getEntries().map(e => e.id);
+		expect(ids).toContain(idKeptThinking);
+		expect(ids).not.toContain(idDoomedThinking);
+		expect(ids).not.toContain(idDoomedUser);
+	});
+
+	it("is idempotent: a second prune finds nothing", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idAsst = session.appendMessage(assistantMsg("answer"));
+		session.branch(idRoot);
+		session.appendMessage(userMsg("abandoned"));
+		session.branch(idAsst);
+
+		expect(await session.pruneEmptyBranches()).toBe(1);
+		expect(await session.pruneEmptyBranches()).toBe(0);
+	});
+
+	it("stays linear on a deep chain", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		session.appendMessage(assistantMsg("answer"));
+		for (let i = 0; i < 20_000; i++) session.appendMessage(userMsg(`turn ${i}`));
+
+		// One abandoned empty branch off the root, so pruning has real work to do.
+		session.branch(idRoot);
+		session.appendMessage(userMsg("abandoned"));
+		session.branch(session.getBranch()[0]?.id ?? idRoot);
+
+		const started = performance.now();
+		await session.pruneEmptyBranches();
+		// A per-entry ancestor walk needs ~2x10^8 lookups here and blows past this;
+		// the linear passes land in single-digit milliseconds.
+		expect(performance.now() - started).toBeLessThan(2_000);
+	});
+
+	it("persists the prune: reloading from disk does not resurrect the branch", async () => {
+		using tempDir = TempDir.createSync("@pi-session-prune-");
+		const session = SessionManager.create(tempDir.path(), tempDir.path());
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idAsst = session.appendMessage(assistantMsg("answer"));
+		session.branch(idRoot);
+		const idAbandoned = session.appendMessage(userMsg("abandoned"));
+		session.branch(idAsst);
+		await session.flush();
+
+		expect(await session.pruneEmptyBranches()).toBe(1);
+		await session.flush();
+
+		const reloaded = await SessionManager.open(session.getSessionFile() as string);
+		const ids = reloaded.getEntries().map(e => e.id);
+		expect(ids).toContain(idRoot);
+		expect(ids).toContain(idAsst);
+		expect(ids).not.toContain(idAbandoned);
 	});
 });

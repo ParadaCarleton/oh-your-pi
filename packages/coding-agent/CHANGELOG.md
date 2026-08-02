@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a `/prune` slash command that deletes conversation branches containing no user or assistant messages, keeping the active branch intact.
 - Added collapsible conversation branches to the HTML export sidebar: every node with children gets a toggle that hides its descendants while keeping the branch node visible.
 
 ### Fixed

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added collapsible conversation branches to the HTML export sidebar: every node with children gets a toggle that hides its descendants while keeping the branch node visible.
+
 ### Fixed
 
 - Fixed session tree connectors being computed from the unfiltered tree, so hiding a branch head via filter or search left dangling connectors and orphan gutters beside the nodes that survived, in both the TUI tree selector and the HTML export.

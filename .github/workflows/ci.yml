@@ -545,7 +545,7 @@ jobs:
          # need the musl loader, which glibc runners lack — they are smoked in
          # the Alpine container step below instead.
          - name: Smoke release binary
-           if: matrix.platform != 'win32' && matrix.libc != 'musl'
+           if: matrix.platform != 'win32'
            run: |
               runtime_dir="$(mktemp -d)"
               HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" "${{ matrix.binary_path }}" --version

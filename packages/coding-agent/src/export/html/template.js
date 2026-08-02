@@ -428,6 +428,74 @@
         });
       }
 
+      /**
+       * Contract hidden nodes out of the displayed tree and recompute connector
+       * metadata against the visible ancestry. Keeping metadata from the full tree
+       * leaves orphan gutters when a branch head is filtered out.
+       */
+      function projectFilteredNodes(flatNodes, visibleNodes) {
+        const visibleIds = new Set(visibleNodes.map(flatNode => flatNode.node.entry.id));
+        const projectedById = new Map();
+        const nearestVisibleById = new Map();
+        const roots = [];
+
+        // flatNodes is pre-order, so the nearest visible ancestor of each
+        // parent is already known when its children are visited.
+        for (const flatNode of flatNodes) {
+          const id = flatNode.node.entry.id;
+          const parentId = flatNode.node.entry.parentId;
+          const visibleParentId = parentId ? nearestVisibleById.get(parentId) : undefined;
+          if (!visibleIds.has(id)) {
+            if (visibleParentId) nearestVisibleById.set(id, visibleParentId);
+            continue;
+          }
+
+          const projected = { flatNode, children: [] };
+          projectedById.set(id, projected);
+          const parent = visibleParentId ? projectedById.get(visibleParentId) : undefined;
+          if (parent) {
+            parent.children.push(projected);
+          } else {
+            roots.push(projected);
+          }
+          nearestVisibleById.set(id, id);
+        }
+
+        const result = [];
+        const multipleRoots = roots.length > 1;
+        const stack = [];
+        for (let i = roots.length - 1; i >= 0; i--) {
+          stack.push([roots[i], multipleRoots ? 1 : 0, multipleRoots, multipleRoots, i === roots.length - 1, [], multipleRoots]);
+        }
+
+        while (stack.length > 0) {
+          const [projected, indent, justBranched, showConnector, isLast, gutters, isVirtualRootChild] = stack.pop();
+          result.push({ ...projected.flatNode, indent, showConnector, isLast, gutters, isVirtualRootChild, multipleRoots });
+
+          const multipleChildren = projected.children.length > 1;
+          const childIndent = multipleChildren || (justBranched && indent > 0) ? indent + 1 : indent;
+          const connectorDisplayed = showConnector && !isVirtualRootChild;
+          const displayIndent = multipleRoots ? Math.max(0, indent - 1) : indent;
+          const childGutters = connectorDisplayed
+            ? [...gutters, { position: Math.max(0, displayIndent - 1), show: !isLast }]
+            : gutters;
+
+          for (let i = projected.children.length - 1; i >= 0; i--) {
+            stack.push([
+              projected.children[i],
+              childIndent,
+              multipleChildren,
+              multipleChildren,
+              i === projected.children.length - 1,
+              childGutters,
+              false
+            ]);
+          }
+        }
+
+        return result;
+      }
+
       // ============================================================
       // TREE DISPLAY TEXT (pure data -> string)
       // ============================================================
@@ -584,13 +652,33 @@
 
       let currentLeafId = leafId;
       let currentTargetId = urlTargetId || leafId;
+      const collapsedNodeIds = new Set();
+
+      function hideCollapsedDescendants(flatNodes) {
+        const parentIds = new Map(flatNodes.map(flatNode => [flatNode.node.entry.id, flatNode.node.entry.parentId]));
+        return flatNodes.filter(flatNode => {
+          let parentId = parentIds.get(flatNode.node.entry.id);
+          while (parentId) {
+            if (collapsedNodeIds.has(parentId)) return false;
+            parentId = parentIds.get(parentId);
+          }
+          return true;
+        });
+      }
+
+      function toggleTreeNode(entryId) {
+        if (collapsedNodeIds.has(entryId)) collapsedNodeIds.delete(entryId);
+        else collapsedNodeIds.add(entryId);
+        forceTreeRerender();
+      }
       let treeRendered = false;
 
       function renderTree() {
         const tree = buildTree();
         const activePathIds = buildActivePathIds(currentLeafId);
         const flatNodes = flattenTree(tree, activePathIds);
-        const filtered = filterNodes(flatNodes, currentLeafId);
+        const visible = filterNodes(hideCollapsedDescendants(flatNodes), currentLeafId);
+        const filtered = projectFilteredNodes(flatNodes, visible);
         const container = document.getElementById('tree-container');
 
         // Full render only on first call or when filter/search changes
@@ -613,18 +701,38 @@
             prefixSpan.className = 'tree-prefix';
             prefixSpan.textContent = prefix;
 
-            const marker = document.createElement('span');
-            marker.className = 'tree-marker';
-            marker.textContent = isOnPath ? '•' : ' ';
+            const collapse = document.createElement('button');
+            collapse.className = 'tree-collapse';
+            if (flatNode.node.children.length > 0) {
+              const isCollapsed = collapsedNodeIds.has(entry.id);
+              collapse.textContent = isCollapsed ? '▸' : '▾';
+              collapse.title = isCollapsed ? 'Expand branch' : 'Collapse branch';
+              collapse.setAttribute('aria-label', collapse.title);
+              collapse.setAttribute('aria-expanded', String(!isCollapsed));
+              collapse.addEventListener('click', (event) => {
+                event.stopPropagation();
+                toggleTreeNode(entry.id);
+              });
+            } else {
+              collapse.classList.add('empty');
+              collapse.tabIndex = -1;
+              collapse.setAttribute('aria-hidden', 'true');
+            }
 
             const content = document.createElement('span');
             content.className = 'tree-content';
             content.innerHTML = getTreeNodeDisplayHtml(entry, flatNode.node.label);
 
             div.appendChild(prefixSpan);
-            div.appendChild(marker);
+            div.appendChild(collapse);
             div.appendChild(content);
-            div.addEventListener('click', () => navigateTo(entry.id));
+            div.addEventListener('click', () => {
+              if (entry.id === currentTargetId && flatNode.node.children.length > 0) {
+                toggleTreeNode(entry.id);
+              } else {
+                navigateTo(entry.id);
+              }
+            });
 
             container.appendChild(div);
           }
@@ -641,10 +749,6 @@
             node.classList.toggle('in-path', isOnPath);
             node.classList.toggle('active', isTarget);
 
-            const marker = node.querySelector('.tree-marker');
-            if (marker) {
-              marker.textContent = isOnPath ? '•' : ' ';
-            }
           }
         }
 
@@ -1273,7 +1377,7 @@
         let html = `
           <div class="header">
             <h1>Session: ${escapeHtml(header?.id || 'unknown')}</h1>
-            <div class="help-bar">T toggle thinking · O toggle tools</div>
+            <div class="help-bar">T toggle thinking · O toggle tools · click the active branch to collapse</div>
             <div class="header-info">
               <div class="info-item"><span class="info-label">Date:</span><span class="info-value">${header?.timestamp ? new Date(header.timestamp).toLocaleString() : 'unknown'}</span></div>
               <div class="info-item"><span class="info-label">Models:</span><span class="info-value">${globalStats.models.join(', ') || 'unknown'}</span></div>

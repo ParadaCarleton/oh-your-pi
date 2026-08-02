@@ -6,6 +6,11 @@
 
 - Added a `/prune` slash command that deletes conversation branches containing no user or assistant messages, keeping the active branch intact.
 - Added collapsible conversation branches to the HTML export sidebar: every node with children gets a toggle that hides its descendants while keeping the branch node visible.
+- Added collapsible branches to the `/tree` selector: `Space` (or `Tab`) folds the selected node's subtree behind a `▸` marker with a hidden-entry count, and `Shift+Tab` folds every branch off the current thread down to one row each (pressing it again expands everything).
+
+### Changed
+
+- Changed `/tree` navigation: `←`/`→` now jump to the previous/next branch point instead of paging, and paging moved to `PgUp`/`PgDn` — matching every other selector in the TUI.
 
 ### Fixed
 

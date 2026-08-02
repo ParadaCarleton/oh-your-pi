@@ -41,6 +41,14 @@ interface FlatNode {
 	gutters: GutterInfo[];
 	/** True if this node is a root under a virtual branching root (multiple roots) */
 	isVirtualRootChild: boolean;
+	/** True if this node has descendants that collapsing would hide */
+	canCollapse: boolean;
+	/** True if this node's descendants are currently collapsed away */
+	collapsed: boolean;
+	/** Number of descendants hidden by this node's collapse (0 unless collapsed) */
+	hiddenDescendants: number;
+	/** True if this node forks: more than one child in the visible tree */
+	isForkPoint: boolean;
 }
 
 /** Filter mode for tree display */
@@ -65,6 +73,8 @@ class TreeList implements Component {
 	#multipleRoots = false;
 	#activePathIds: Set<string> = new Set();
 	#lastSelectedId: string | null = null;
+	#collapsedIds: Set<string> = new Set();
+	#hiddenDescendantCounts: Map<string, number> = new Map();
 
 	onSelect?: (entryId: string, options: { summarize: boolean }) => void;
 	onCancel?: () => void;
@@ -208,7 +218,20 @@ class TreeList implements Component {
 				}
 			}
 
-			result.push({ node, indent, showConnector, isLast, gutters, isVirtualRootChild });
+			// Collapse metadata is decided against the *visible* tree, so it is
+			// filled in by #projectFilteredNodes rather than here.
+			result.push({
+				node,
+				indent,
+				showConnector,
+				isLast,
+				gutters,
+				isVirtualRootChild,
+				canCollapse: false,
+				collapsed: false,
+				hiddenDescendants: 0,
+				isForkPoint: false,
+			});
 
 			const children = node.children;
 			const multipleChildren = children.length > 1;
@@ -271,6 +294,32 @@ class TreeList implements Component {
 	}
 
 	/**
+	 * Drop the descendants of collapsed nodes and record how many each collapse
+	 * hides. `#flatNodes` is pre-order, so a node's parent is always classified
+	 * before the node itself — one linear pass, no per-node ancestor walk.
+	 */
+	#hideCollapsedDescendants(flatNodes: FlatNode[]): FlatNode[] {
+		this.#hiddenDescendantCounts.clear();
+		if (this.#collapsedIds.size === 0) return flatNodes;
+
+		// id -> the collapsed ancestor that hid it, so counts land on the node
+		// the user actually collapsed rather than on intermediate descendants.
+		const hiddenUnder = new Map<string, string>();
+		return flatNodes.filter(flatNode => {
+			const parentId = flatNode.node.entry.parentId;
+			if (!parentId) return true;
+			// An already-hidden parent wins over a collapsed one: a collapse nested
+			// inside another collapse is invisible, so its descendants belong to the
+			// outermost fold — the only one whose count the user can see.
+			const collapseRoot = hiddenUnder.get(parentId) ?? (this.#collapsedIds.has(parentId) ? parentId : undefined);
+			if (collapseRoot === undefined) return true;
+			hiddenUnder.set(flatNode.node.entry.id, collapseRoot);
+			this.#hiddenDescendantCounts.set(collapseRoot, (this.#hiddenDescendantCounts.get(collapseRoot) ?? 0) + 1);
+			return false;
+		});
+	}
+
+	/**
 	 * Contract hidden nodes out of the displayed tree and recompute connector
 	 * metadata against the visible ancestry. Keeping metadata from the full tree
 	 * leaves orphan gutters when a branch head is filtered out.
@@ -327,7 +376,23 @@ class TreeList implements Component {
 
 		while (stack.length > 0) {
 			const [projected, indent, justBranched, showConnector, isLast, gutters, isVirtualRootChild] = stack.pop()!;
-			result.push({ ...projected.flatNode, indent, showConnector, isLast, gutters, isVirtualRootChild });
+			// A collapsed node has no visible children by construction, so it stays
+			// collapsible on the strength of the collapse itself.
+			const entryId = projected.flatNode.node.entry.id;
+			const collapsed = this.#collapsedIds.has(entryId);
+			result.push({
+				...projected.flatNode,
+				indent,
+				showConnector,
+				isLast,
+				gutters,
+				isVirtualRootChild,
+				canCollapse: collapsed || projected.children.length > 0,
+				collapsed,
+				hiddenDescendants: this.#hiddenDescendantCounts.get(entryId) ?? 0,
+				// A collapsed fork keeps its status: the branches are hidden, not gone.
+				isForkPoint: projected.children.length > 1 || (collapsed && projected.flatNode.node.children.length > 1),
+			});
 
 			const multipleChildren = projected.children.length > 1;
 			const childIndent = multipleChildren || (justBranched && indent > 0) ? indent + 1 : indent;
@@ -362,7 +427,10 @@ class TreeList implements Component {
 
 		const searchTokens = this.#searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
 
-		const visibleNodes = this.#flatNodes.filter(flatNode => {
+		// Collapse first, filter second: a collapsed subtree is gone regardless of
+		// which filter mode is active, and the projection below then reconnects
+		// the survivors — same order the HTML export uses.
+		const visibleNodes = this.#hideCollapsedDescendants(this.#flatNodes).filter(flatNode => {
 			const entry = flatNode.node.entry;
 			const isCurrentLeaf = entry.id === this.currentLeafId;
 
@@ -498,6 +566,73 @@ class TreeList implements Component {
 
 	getSelectedNode(): SessionTreeNode | undefined {
 		return this.#filteredNodes[this.#selectedIndex]?.node;
+	}
+
+	/** Entry ids currently drawn, in display order. */
+	getVisibleEntryIds(): string[] {
+		return this.#filteredNodes.map(flatNode => flatNode.node.entry.id);
+	}
+
+	isCollapsed(entryId: string): boolean {
+		return this.#collapsedIds.has(entryId);
+	}
+
+	/**
+	 * Collapse or expand the selected node's subtree. Nodes with nothing visible
+	 * below them are left alone so the key is a no-op instead of a silent state
+	 * change the user cannot see or undo.
+	 */
+	toggleCollapse(): void {
+		const selected = this.#filteredNodes[this.#selectedIndex];
+		if (!selected?.canCollapse) return;
+		const entryId = selected.node.entry.id;
+		if (!this.#collapsedIds.delete(entryId)) this.#collapsedIds.add(entryId);
+		this.#applyFilter();
+	}
+
+	/**
+	 * Fold every branch that hangs off the current thread, leaving the path to the
+	 * active leaf fully expanded and each abandoned branch showing as a single
+	 * row. Pressing it again expands everything.
+	 *
+	 * This is the useful shape of a bulk collapse: folding *all* fork points also
+	 * folds the thread you are reading, which is the one thing you never want
+	 * hidden.
+	 */
+	focusCurrentThread(): void {
+		if (this.#collapsedIds.size > 0) {
+			this.#collapsedIds.clear();
+			this.#applyFilter();
+			return;
+		}
+		for (const flatNode of this.#flatNodes) {
+			const { id, parentId } = flatNode.node.entry;
+			// Only the *head* of each off-thread branch folds — the first node that
+			// leaves the active path. Folding its descendants too would be invisible
+			// (they are already hidden) and would leave stale collapse state behind
+			// once the head is reopened.
+			if (this.#activePathIds.has(id)) continue;
+			if (!parentId || !this.#activePathIds.has(parentId)) continue;
+			if (flatNode.node.children.length === 0) continue;
+			this.#collapsedIds.add(id);
+		}
+		this.#applyFilter();
+	}
+
+	/**
+	 * Move the cursor to the next (`+1`) or previous (`-1`) fork point, so long
+	 * chains between branches can be skipped in one keypress. Falls through to
+	 * the last/first row when no further fork exists in that direction.
+	 */
+	jumpToBranchPoint(direction: 1 | -1): void {
+		if (this.#filteredNodes.length === 0) return;
+		for (let i = this.#selectedIndex + direction; i >= 0 && i < this.#filteredNodes.length; i += direction) {
+			if (this.#filteredNodes[i].isForkPoint) {
+				this.#selectedIndex = i;
+				return;
+			}
+		}
+		this.#selectedIndex = direction > 0 ? this.#filteredNodes.length - 1 : 0;
 	}
 
 	updateNodeLabel(entryId: string, label: string | undefined): void {
@@ -655,10 +790,18 @@ class TreeList implements Component {
 			const isOnActivePath = this.#activePathIds.has(entry.id);
 			const pathMarker = isOnActivePath ? theme.fg("accent", `${theme.md.bullet} `) : "";
 
+			// Only collapsed rows carry a marker. Reserving a chevron column for every
+			// row would push all content right and stamp a `▾` on each link of every
+			// single-child chain — noise on the common case, and it breaks the
+			// connector geometry the tree is read by.
+			const collapseMarker = flatNode.collapsed ? theme.fg("warning", `${theme.nav.expand} `) : "";
+			const hiddenCount =
+				flatNode.hiddenDescendants > 0 ? theme.fg("muted", ` (+${flatNode.hiddenDescendants})`) : "";
+
 			const label = flatNode.node.label ? theme.fg("warning", `[${flatNode.node.label}] `) : "";
 			const content = this.#getEntryDisplayText(flatNode.node, isSelected);
 
-			let line = cursor + theme.fg("dim", prefix) + pathMarker + label + content;
+			let line = cursor + theme.fg("dim", prefix) + collapseMarker + pathMarker + label + content + hiddenCount;
 			if (isSelected) {
 				line = theme.bg("selectedBg", line);
 			}
@@ -871,10 +1014,12 @@ class TreeList implements Component {
 		} else if (matchesSelectDown(keyData)) {
 			this.#selectedIndex = this.#selectedIndex === this.#filteredNodes.length - 1 ? 0 : this.#selectedIndex + 1;
 		} else if (matchesKey(keyData, "left")) {
-			// Page up
-			this.#selectedIndex = Math.max(0, this.#selectedIndex - this.maxVisibleLines);
+			this.jumpToBranchPoint(-1);
 		} else if (matchesKey(keyData, "right")) {
-			// Page down
+			this.jumpToBranchPoint(1);
+		} else if (matchesKey(keyData, "pageUp")) {
+			this.#selectedIndex = Math.max(0, this.#selectedIndex - this.maxVisibleLines);
+		} else if (matchesKey(keyData, "pageDown")) {
 			this.#selectedIndex = Math.min(this.#filteredNodes.length - 1, this.#selectedIndex + this.maxVisibleLines);
 		} else if (matchesKey(keyData, "shift+enter") || matchesKey(keyData, "shift+return")) {
 			// Summarize-and-switch: fork with a branch summary without the extra prompt.
@@ -923,6 +1068,12 @@ class TreeList implements Component {
 		} else if (matchesKey(keyData, "alt+a")) {
 			this.#filterMode = "all";
 			this.#applyFilter();
+		} else if (matchesKey(keyData, "shift+tab")) {
+			this.focusCurrentThread();
+		} else if (matchesKey(keyData, "tab") || (matchesKey(keyData, "space") && !this.#searchQuery)) {
+			// Space is the natural collapse key, but it is also a search character,
+			// so it only collapses while no search is being typed. Tab always works.
+			this.toggleCollapse();
 		} else if (matchesKey(keyData, "backspace")) {
 			if (this.#searchQuery.length > 0) {
 				this.#searchQuery = this.#searchQuery.slice(0, -1);
@@ -1038,7 +1189,7 @@ export class TreeSelectorComponent extends Container {
 			new TruncatedText(
 				theme.fg(
 					"muted",
-					"Enter: switch. Shift+Enter: summarize & switch. Shift+L: label. Ctrl+O: filter. Alt+D/T/U/L/A: filter. Type to search",
+					"Enter: switch. Space: collapse. Shift+Tab: focus thread. ←/→: branch points. Shift+L: label. Ctrl+O: filter. Type to search",
 				),
 				0,
 				0,

@@ -414,6 +414,7 @@ export interface InteractiveModeContext {
 	): Promise<CompactionOutcome>;
 	handleHandoffCommand(customInstructions?: string): Promise<void>;
 	handleShakeCommand(mode: ShakeMode): Promise<void>;
+	handlePruneCommand(): Promise<void>;
 	handleMoveCommand(targetPath?: string): Promise<void>;
 	/** `/wt`: fork the checkout into a new worktree (keeping changes) and move there. */
 	handleWorktreeCommand(branch?: string): Promise<void>;

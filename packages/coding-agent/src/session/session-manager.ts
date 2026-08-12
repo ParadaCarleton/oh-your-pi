@@ -31,7 +31,12 @@ import {
 	sanitizeRehydratedOpenAIResponsesAssistantMessage,
 	stripInternalDetailsFields,
 } from "./messages";
-import { type BuildSessionContextOptions, buildSessionContext, type SessionContext } from "./session-context";
+import {
+	type BuildSessionContextOptions,
+	buildSessionContext,
+	getLatestCompactionEntry,
+	type SessionContext,
+} from "./session-context";
 import {
 	type BranchSummaryEntry,
 	type CompactionEntry,
@@ -2197,6 +2202,21 @@ export class SessionManager {
 	async rewriteEntries(): Promise<void> {
 		if (!this.#persist || !this.#sessionFile) return;
 		await this.#rewriteAtomically();
+	}
+
+	/**
+	 * Replace the summary of the most recent compaction entry. The live model
+	 * context and the TUI transcript both read summaries from the entry, so
+	 * the edit propagates everywhere, and the session file is rewritten in
+	 * place so a resume keeps the edited text (#8281). Returns the edited
+	 * entry id, or null when the session has no compaction entry yet.
+	 */
+	async updateLatestCompactionSummary(summary: string): Promise<string | null> {
+		const entry = getLatestCompactionEntry(this.getBranch());
+		if (!entry) return null;
+		entry.summary = summary;
+		await this.rewriteEntries();
+		return entry.id;
 	}
 
 	/**

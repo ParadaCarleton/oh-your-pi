@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `/compact-edit` to open the current compaction summary in a text editor; the saved text becomes the summary used by subsequent turns, persisted so a resume keeps it ([#8281](https://github.com/can1357/oh-my-pi/issues/8281)).
+
 ## [17.2.15] - 2026-08-12
 
 ### Added

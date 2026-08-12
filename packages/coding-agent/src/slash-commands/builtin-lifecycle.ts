@@ -5,6 +5,7 @@ import { applyProviderGlobalsFromSettings } from "../config/provider-globals";
 import { memoryStatsUnavailableMessage, resolveMemoryBackend } from "../memory-backend";
 import type { FreshSessionResult } from "../session/agent-session";
 import { COMPACT_MODES, parseCompactArgs } from "../session/compact-modes";
+import { getLatestCompactionEntry } from "../session/session-context";
 import { resolveResumableSession } from "../session/session-listing";
 import { formatShakeSummary, type ShakeMode } from "../session/shake-types";
 import { resolveToCwd } from "../tools/path-utils";
@@ -164,6 +165,29 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 				return;
 			}
 			await runtime.ctx.handleCompactCommand(parsed.instructions, parsed.mode);
+		},
+	},
+	{
+		name: "compact-edit",
+		description: "Edit the current compaction summary in a text editor",
+		acpDescription: "Edit the current compaction summary",
+		handle: async (_command, runtime) => {
+			// The editor is interactive-only; ACP callers get a pointer to the
+			// TUI command instead of a silent no-op.
+			const entry = getLatestCompactionEntry(runtime.sessionManager.getBranch());
+			if (!entry) return usage("No compaction summary to edit yet.", runtime);
+			return usage("Compaction summary editing is interactive-only; run /compact-edit in the TUI.", runtime);
+		},
+		handleTui: async (_command, runtime) => {
+			const entry = getLatestCompactionEntry(runtime.ctx.sessionManager.getBranch());
+			if (!entry) {
+				runtime.ctx.showWarning("No compaction summary to edit yet.");
+				return;
+			}
+			const edited = await runtime.ctx.showHookEditor("Edit compaction summary", entry.summary);
+			if (edited === undefined || edited === entry.summary) return;
+			await runtime.ctx.sessionManager.updateLatestCompactionSummary(edited);
+			runtime.ctx.showStatus("Compaction summary updated.");
 		},
 	},
 	{

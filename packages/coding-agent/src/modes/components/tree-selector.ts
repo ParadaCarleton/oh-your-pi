@@ -164,6 +164,11 @@ class TreeList implements Component {
 	onLabelEdit?: (entryId: string, currentLabel: string | undefined) => void;
 	/** Reveal or re-hide archived branches. The node set changes, so the caller rebuilds the list. */
 	onToggleArchived?: () => void;
+	/**
+	 * Hide the highlighted branch, or reveal it when it is already archived. The
+	 * node set changes either way, so the caller rebuilds the list.
+	 */
+	onArchiveToggle?: (entryId: string) => void;
 
 	constructor(
 		tree: SessionTreeNode[],
@@ -1233,6 +1238,13 @@ class TreeList implements Component {
 			if (selected && this.onLabelEdit) {
 				this.onLabelEdit(selected.node.entry.id, selected.node.label);
 			}
+		} else if (matchesKey(keyData, "shift+a") && !this.#searchQuery) {
+			// Capital A is also a search character, so this only fires while no
+			// search is being typed — the same rule Shift+L follows for labels.
+			const selected = this.#filteredNodes[this.#selectedIndex];
+			if (selected && this.onArchiveToggle) {
+				this.onArchiveToggle(selected.node.entry.id);
+			}
 		} else {
 			const printableText = extractPrintableText(keyData);
 			if (printableText) {
@@ -1315,12 +1327,16 @@ export class TreeSelectorComponent extends OverlayPanel {
 		onCancel: () => void,
 		private readonly onLabelChangeCallback?: (entryId: string, label: string | undefined) => void,
 		initialFilterMode: FilterMode = "default",
-		archive: { showing?: boolean; onToggle?: () => void } = {},
+		archive: { showing?: boolean; onToggle?: () => void; onArchiveToggle?: (entryId: string) => void } = {},
 	) {
 		// The help line is truncated to the terminal width, so the archive hint
 		// rides in the panel title instead — a toggle nobody can see is a toggle
 		// nobody presses.
-		super(archive.showing ? "Session Tree [showing archived] Alt+R: hide" : "Session Tree — Alt+R: show archived");
+		super(
+			archive.showing
+				? "Session Tree [showing archived] Alt+R: hide, Shift+A: archive/restore"
+				: "Session Tree — Alt+R: show archived, Shift+A: archive",
+		);
 		// The outer panel has eight fixed rows around the tree list: top/bottom
 		// borders, the two spacers, help, search, and section divider.
 		const PANEL_CHROME_ROWS = 8;
@@ -1334,13 +1350,13 @@ export class TreeSelectorComponent extends OverlayPanel {
 		this.#treeList.onCancel = onCancel;
 		this.#treeList.onLabelEdit = (entryId, currentLabel) => this.#showLabelInput(entryId, currentLabel);
 		if (archive.onToggle) this.#treeList.onToggleArchived = archive.onToggle;
+		if (archive.onArchiveToggle) this.#treeList.onArchiveToggle = archive.onArchiveToggle;
 
 		this.#treeContainer = new Container();
 		this.#treeContainer.addChild(this.#treeList);
 
 		this.#labelInputContainer = new Container();
 		this.addChild(new Spacer(1));
-
 		this.addChild(
 			new TruncatedText(
 				theme.fg(

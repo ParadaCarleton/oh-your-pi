@@ -4,12 +4,14 @@ import * as path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { withStatsSyncLock } from "@oh-my-pi/omp-stats/aggregator";
 import {
+	formatDuration,
 	getAgentDir,
 	getBlobsDir,
 	getHistoryDbPath,
 	getModelDbPath,
 	getSessionsDir,
 	getStatsDbPath,
+	pluralize,
 	readLines,
 } from "@oh-my-pi/pi-utils";
 import { Settings } from "../config/settings";
@@ -22,6 +24,7 @@ import { planSessionMerge, type SessionMergeConflict } from "../session/session-
 import { resolveManagedSessionRoot } from "../session/session-paths";
 import { FileSessionStorage } from "../session/session-storage";
 import { parseTitleSlotFromContent, serializeTitleSlot, titleUpdateFromSlot } from "../session/session-title-slot";
+import { shortenPath } from "../tools/render-utils";
 
 const BLOB_FILE_RE = /^([a-f0-9]{64})(?:\.[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$/;
 const BLOB_REF_RE = /\bblob:sha256:([a-f0-9]{64})\b/gi;
@@ -96,6 +99,13 @@ export interface MergeDuplicateConflict extends SessionMergeConflict {
 	sessionId: string;
 }
 
+/** A duplicate-group file the write grace excluded because a live writer may still hold it. */
+export interface MergeSkippedFile {
+	sessionId: string;
+	path: string;
+	secondsSinceWrite: number;
+}
+
 export interface MergeDuplicateCandidate {
 	sessionId: string;
 	destination: string;
@@ -106,6 +116,7 @@ export interface MergeGcResult {
 	scanned: number;
 	groups: number;
 	skippedActive: number;
+	skipped: MergeSkippedFile[];
 	wouldMerge: number;
 	merged: number;
 	archivedSources: number;
@@ -600,11 +611,20 @@ async function collectDuplicateSessionGroups(
 
 	const storage = new FileSessionStorage();
 	const groups: DuplicateSessionGroup[] = [];
-	const archiveBeforeMs = Date.now() - GC_WRITE_GRACE_MS;
+	const now = Date.now();
+	const archiveBeforeMs = now - GC_WRITE_GRACE_MS;
 	for (const [sessionId, members] of byId) {
 		if (members.length < 2 || new Set(members.map(member => path.dirname(member.path))).size < 2) continue;
-		if (members.some(member => member.mtimeMs > archiveBeforeMs)) {
+		const writing = members.filter(member => member.mtimeMs > archiveBeforeMs);
+		if (writing.length > 0) {
 			result.skippedActive += members.length;
+			for (const member of writing) {
+				result.skipped.push({
+					sessionId,
+					path: member.path,
+					secondsSinceWrite: Math.max(0, Math.round((now - member.mtimeMs) / 1000)),
+				});
+			}
 			continue;
 		}
 		const loaded: DuplicateSessionFile[] = [];
@@ -1475,6 +1495,7 @@ async function runMergeGc(options: ResolvedGcOptions, archiveRoot: string): Prom
 		scanned: 0,
 		groups: 0,
 		skippedActive: 0,
+		skipped: [],
 		wouldMerge: 0,
 		merged: 0,
 		archivedSources: 0,
@@ -1794,14 +1815,28 @@ function renderText(result: GcResult): string {
 		if (result.archive.errors.length > 0) lines.push(`session errors: ${result.archive.errors.length}`);
 	}
 	if (result.mergeDuplicates) {
+		const merge = result.mergeDuplicates;
+		const conflicts =
+			merge.conflicts.length > 0
+				? `, ${merge.conflicts.length} ${pluralize("conflict", merge.conflicts.length)} (destination kept)`
+				: "";
 		lines.push(
-			`duplicates: ${result.mergeDuplicates.archivedSources}/${result.mergeDuplicates.wouldMerge} files merged across ${result.mergeDuplicates.groups} groups, ${result.mergeDuplicates.addedEntries} entries added`,
+			result.apply
+				? `duplicates: ${merge.archivedSources}/${merge.wouldMerge} ${pluralize("file", merge.wouldMerge)} merged across ${merge.groups} ${pluralize("group", merge.groups)}, ${merge.addedEntries} ${pluralize("entry", merge.addedEntries)} added${conflicts}`
+				: `duplicates: would merge ${merge.wouldMerge} ${pluralize("file", merge.wouldMerge)} into ${merge.groups} ${pluralize("session", merge.groups)}, adding ${merge.addedEntries} ${pluralize("entry", merge.addedEntries)}${conflicts}`,
 		);
-		if (result.mergeDuplicates.skippedActive > 0) {
-			lines.push(`duplicates skipped active: ${result.mergeDuplicates.skippedActive}`);
+		if (merge.skipped.length > 0) {
+			for (const skipped of merge.skipped) {
+				const sinceMs = skipped.secondsSinceWrite * 1000;
+				lines.push(
+					`duplicates skipped active: ${shortenPath(skipped.path)} written ${formatDuration(sinceMs)} ago, eligible in ${formatDuration(GC_WRITE_GRACE_MS - sinceMs)}`,
+				);
+			}
+		} else if (merge.skippedActive > 0) {
+			lines.push(`duplicates skipped active: ${merge.skippedActive}`);
 		}
-		if (result.mergeDuplicates.errors.length > 0) {
-			lines.push(`duplicate merge errors: ${result.mergeDuplicates.errors.length}`);
+		if (merge.errors.length > 0) {
+			lines.push(`duplicate merge errors: ${merge.errors.length}`);
 		}
 	}
 	if (result.wal) {

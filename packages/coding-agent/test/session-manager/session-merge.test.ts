@@ -187,7 +187,6 @@ describe("planSessionMerge", () => {
 		expect(plan.skippedEntries).toBe(0);
 	});
 
-
 	it("is idempotent: re-planning against the merged output adds nothing", () => {
 		const into = [msg("a", null), reply("b", "a"), msg("c", "b", "destination text")];
 		const from = [

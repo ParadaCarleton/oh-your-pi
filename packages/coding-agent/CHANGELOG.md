@@ -1106,6 +1106,9 @@
 - Fixed `hub jobs` and empty `hub wait` snapshots hiding running subagents that have no live turn, which removed the only way to discover and `hub cancel` a stale registration; such agents are listed again and flagged as having no turn in flight.
 - Fixed external thinking being offered on xAI reasoning-only Responses models (grok-4 family) that reject `reasoning.effort`, where the private scratchpad ran alongside native reasoning instead of replacing it.
 - Fixed the extension tool-call handler timeout rendering outside a titled section in `/settings` by registering its Extensions group on the Tools tab.
+### Added
+
+- Added `omp gc --merge-duplicates`, which reunites a session that got written to two project directories. Each copy can hold branches the other lost, so the pass unions them by entry id instead of picking a winner: the copy whose directory matches the recorded `cwd` stays authoritative, branches only the other copy has are grafted onto their parents, and disagreements over a shared entry's parent, payload, or the session header are reported rather than resolved silently. Dry-run by default; `--apply` backs the destination up and moves the consumed copy to the archive root.
 
 ## [17.3.4] - 2026-08-14
 

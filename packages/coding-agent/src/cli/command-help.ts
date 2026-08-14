@@ -49,7 +49,9 @@ export const galleryHelp = {
 	description: "Preview tool, composer, and status-line renderers in a deterministic visual gallery",
 } satisfies CommandMetadata;
 
-export const gcHelp = { description: "Run storage garbage collection" } satisfies CommandMetadata;
+export const gcHelp = {
+	description: "Run storage garbage collection, including duplicate-session merges",
+} satisfies CommandMetadata;
 export const ifBenchHelp = {
 	description:
 		"Benchmark instruction following and working memory: one cached thread of glyph array actions with a moving cat-sound directive",

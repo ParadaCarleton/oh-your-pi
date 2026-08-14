@@ -15,10 +15,15 @@ const OLD_DATE = new Date("2026-01-01T00:00:00.000Z");
 
 let root: string;
 let stdoutSpy: { mockRestore(): void } | undefined;
+let stdout = "";
 
 beforeEach(async () => {
 	root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-gc-merge-"));
-	stdoutSpy = spyOn(process.stdout, "write").mockImplementation(() => true);
+	stdout = "";
+	stdoutSpy = spyOn(process.stdout, "write").mockImplementation(chunk => {
+		stdout += String(chunk);
+		return true;
+	});
 });
 
 afterEach(async () => {
@@ -117,6 +122,70 @@ describe("omp gc duplicate-session merge", () => {
 		expect(await Bun.file(pair.source).text()).toBe(sourceBefore);
 		expect(await Bun.file(pair.sourceArtifact).text()).toBe("source branch artifact");
 		expect(await backupFiles(pair.destination)).toEqual([]);
+	});
+
+	test("reports a fresh duplicate file and leaves the whole group untouched", async () => {
+		const agentDir = path.join(root, "agent");
+		const pair = await createDivergentPair(agentDir);
+		const destinationBefore = await Bun.file(pair.destination).text();
+		const sourceBefore = await Bun.file(pair.source).text();
+		const now = new Date();
+		await fs.utimes(pair.destination, OLD_DATE, OLD_DATE);
+		await fs.utimes(pair.source, now, now);
+
+		const result = await runGcCommand({ flags: { agentDir, mergeDuplicates: true, apply: true } });
+
+		expect(result.mergeDuplicates?.groups).toBe(0);
+		expect(result.mergeDuplicates?.merged).toBe(0);
+		expect(result.mergeDuplicates?.skippedActive).toBe(2);
+		expect(result.mergeDuplicates?.skipped).toHaveLength(1);
+		expect(result.mergeDuplicates?.skipped[0]?.sessionId).toBe(SESSION_ID);
+		expect(result.mergeDuplicates?.skipped[0]?.path).toBe(pair.source);
+		expect(result.mergeDuplicates?.skipped[0]?.secondsSinceWrite).toBeGreaterThanOrEqual(0);
+		expect(result.mergeDuplicates?.skipped[0]?.secondsSinceWrite).toBeLessThan(60);
+		expect(result.mergeDuplicates?.candidates).toEqual([]);
+		expect(await Bun.file(pair.destination).text()).toBe(destinationBefore);
+		expect(await Bun.file(pair.source).text()).toBe(sourceBefore);
+		expect(stdout).toContain(`duplicates skipped active: ${pair.source} written `);
+		expect(stdout).toContain(" ago, eligible in ");
+	});
+
+	test("merges an explicitly old duplicate pair without skipped files", async () => {
+		const agentDir = path.join(root, "agent");
+		const pair = await createDivergentPair(agentDir);
+		await fs.utimes(pair.destination, OLD_DATE, OLD_DATE);
+		await fs.utimes(pair.source, OLD_DATE, OLD_DATE);
+
+		const result = await runGcCommand({ flags: { agentDir, mergeDuplicates: true, apply: true } });
+
+		expect(result.mergeDuplicates?.skipped).toEqual([]);
+		expect(result.mergeDuplicates?.merged).toBe(1);
+		expect(result.mergeDuplicates?.archivedSources).toBe(1);
+		expect(
+			logicalEntries(await loadEntriesFromFile(pair.destination, new FileSessionStorage())).map(value => value.id),
+		).toEqual(["shared", "destination-branch", "source-branch"]);
+		expect(stdout).toContain("duplicates: 1/1 file merged across 1 group, 1 entry added");
+	});
+
+	test("renders dry-run work as predictions and surfaces conflicts", async () => {
+		const agentDir = path.join(root, "agent");
+		const pair = await createDivergentPair(agentDir);
+		const sourceEntries = await loadEntriesFromFile(pair.source, new FileSessionStorage());
+		const sourceBranch = sourceEntries.find(
+			(value): value is SessionEntry => "parentId" in value && value.id === "source-branch",
+		);
+		expect(sourceBranch).toBeDefined();
+		sourceBranch!.id = "destination-branch";
+		await Bun.write(pair.source, `${sourceEntries.map(value => JSON.stringify(value)).join("\n")}\n`);
+		await fs.utimes(pair.destination, OLD_DATE, OLD_DATE);
+		await fs.utimes(pair.source, OLD_DATE, OLD_DATE);
+
+		const result = await runGcCommand({ flags: { agentDir, mergeDuplicates: true } });
+
+		expect(result.mergeDuplicates?.conflicts).toHaveLength(1);
+		expect(stdout).toContain(
+			"duplicates: would merge 1 file into 1 session, adding 0 entries, 1 conflict (destination kept)",
+		);
 	});
 
 	test("apply writes the union, keeps a parseable backup, and archives the consumed source", async () => {

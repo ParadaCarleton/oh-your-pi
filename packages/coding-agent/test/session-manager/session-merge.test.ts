@@ -46,7 +46,7 @@ describe("planSessionMerge", () => {
 
 		const plan = planSessionMerge(into, from);
 
-		expect(ids(plan.merged)).toEqual(["a", "b", "c", "d", "e"]);
+		expect(ids(plan.merged)).toEqual(["a", "b", "d", "e", "c"]);
 		expect(ids(plan.merged).filter(id => id === "b")).toHaveLength(1);
 		expect(plan.keptEntries).toBe(3);
 		expect(plan.addedEntries).toBe(2);
@@ -55,16 +55,16 @@ describe("planSessionMerge", () => {
 		expect(plan.merged).toHaveLength(plan.keptEntries + plan.addedEntries);
 	});
 
-	it("keeps destination order for destination entries and appends grafts after them", () => {
+	it("keeps destination relative order and interleaves grafts after their parents", () => {
 		const into = [msg("a", null), reply("b", "a"), msg("c", "a")];
 		const from = [reply("d", "a")];
 
 		const plan = planSessionMerge(into, from);
 
-		expect(ids(plan.merged)).toEqual(["a", "b", "c", "d"]);
+		expect(ids(plan.merged)).toEqual(["a", "d", "b", "c"]);
 		expect(plan.merged[0]).toBe(into[0]);
-		expect(plan.merged[1]).toBe(into[1]);
-		expect(plan.merged[2]).toBe(into[2]);
+		expect(plan.merged[2]).toBe(into[1]);
+		expect(plan.merged[3]).toBe(into[2]);
 	});
 
 	it("keeps the destination payload for a shared id and reports a payload conflict", () => {
@@ -159,7 +159,7 @@ describe("planSessionMerge", () => {
 
 		expect(plan.merged[0]).toBe(destinationHeader);
 		expect(plan.merged.filter(entry => entry.type === "session")).toEqual([destinationHeader]);
-		expect(ids(plan.merged)).toEqual(["session-id", "a", "b", "c"]);
+		expect(ids(plan.merged)).toEqual(["session-id", "a", "c", "b"]);
 		expect(plan.keptEntries).toBe(3);
 		expect(plan.addedEntries).toBe(1);
 		expect(plan.skippedEntries).toBe(0);
@@ -235,6 +235,90 @@ describe("planSessionMerge", () => {
 		expect(plan.addedEntries).toBe(3);
 		expect(plan.skippedEntries).toBe(0);
 		expect(ids(plan.merged)).toEqual(["a", "b", "c"]);
+		assertTopological(plan.merged);
+	});
+
+	it("preserves source order among grafted siblings", () => {
+		const into = [msg("root", null), reply("attachment", "root"), msg("destination-tail", "attachment")];
+		const firstSibling = call("first-sibling", "attachment");
+		const secondSibling = reply("second-sibling", "attachment");
+
+		const plan = planSessionMerge(into, [firstSibling, secondSibling]);
+
+		expect(ids(plan.merged)).toEqual(["root", "attachment", "first-sibling", "second-sibling", "destination-tail"]);
+		assertTopological(plan.merged);
+	});
+
+	it("places a grafted chain directly after its attachment point in parent-before-child order", () => {
+		const into = [msg("root", null), reply("attachment", "root"), msg("destination-tail", "attachment")];
+		const graft = call("graft", "attachment");
+		const child = result("graft-child", "graft");
+		const grandchild = msg("graft-grandchild", "graft-child");
+
+		const plan = planSessionMerge(into, [grandchild, graft, child]);
+		const attachmentIndex = plan.merged.findIndex(entry => entry.id === "attachment");
+
+		expect(ids(plan.merged).slice(attachmentIndex, attachmentIndex + 4)).toEqual([
+			"attachment",
+			"graft",
+			"graft-child",
+			"graft-grandchild",
+		]);
+		expect(plan.merged.at(-1)).toBe(into.at(-1));
+		assertTopological(plan.merged);
+	});
+
+	it("keeps the destination leaf last when a source branch diverges before its tail", () => {
+		const destinationHeader = header("session-id");
+		const sharedRoot = msg("shared-root", null);
+		const destinationReply = reply("destination-reply", "shared-root");
+		const destinationTail = msg("destination-tail", "destination-reply");
+		const into: FileEntry[] = [destinationHeader, sharedRoot, destinationReply, destinationTail];
+		const sourceBranch = reply("source-branch", "shared-root");
+		const sourceTail = msg("source-tail", "source-branch");
+		const from: FileEntry[] = [destinationHeader, sharedRoot, sourceBranch, sourceTail];
+
+		const plan = planSessionMerge(into, from);
+		const sourceBranchIndex = plan.merged.findIndex(entry => entry.id === sourceBranch.id);
+		const sharedRootIndex = plan.merged.findIndex(entry => entry.id === sharedRoot.id);
+
+		expect(sourceBranchIndex).toBe(sharedRootIndex + 1);
+		expect(plan.merged[sourceBranchIndex + 1]).toBe(sourceTail);
+		expect(plan.merged.at(-1)).toBe(destinationTail);
+		expect(ids(plan.merged)).toEqual([
+			"session-id",
+			"shared-root",
+			"source-branch",
+			"source-tail",
+			"destination-reply",
+			"destination-tail",
+		]);
+		expect(new Set(ids(plan.merged))).toEqual(
+			new Set([
+				"session-id",
+				"shared-root",
+				"destination-reply",
+				"destination-tail",
+				"source-branch",
+				"source-tail",
+			]),
+		);
+		expect(plan.keptEntries).toBe(into.length);
+		expect(plan.addedEntries).toBe(2);
+		expect(plan.skippedEntries).toBe(0);
+		expect(plan.conflicts).toEqual([]);
+		assertTopological(plan.merged);
+	});
+
+	it("moves the leaf onto a source continuation descending from the destination's last entry", () => {
+		const into = [msg("root", null), reply("destination-leaf", "root")];
+		const continuation = msg("continuation", "destination-leaf");
+		const continuationTail = reply("continuation-tail", "continuation");
+
+		const plan = planSessionMerge(into, [continuationTail, continuation]);
+
+		expect(ids(plan.merged)).toEqual(["root", "destination-leaf", "continuation", "continuation-tail"]);
+		expect(plan.merged.at(-1)).toBe(continuationTail);
 		assertTopological(plan.merged);
 	});
 

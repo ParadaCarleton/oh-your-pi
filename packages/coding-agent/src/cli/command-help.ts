@@ -50,7 +50,11 @@ export const galleryHelp = {
 } satisfies CommandMetadata;
 
 export const gcHelp = {
-	description: "Run storage garbage collection, including duplicate-session merges",
+	description: "Run storage garbage collection, including session merges",
+	examples: [
+		"omp gc --merge-duplicates             # Merge split copies of the same session (dry-run by default)",
+		"omp gc --merge-forks                  # Graft forked sessions into their parents (dry-run by default)",
+	],
 } satisfies CommandMetadata;
 export const ifBenchHelp = {
 	description:

@@ -895,6 +895,8 @@
 - Added `/unarchive` to bring hidden branches back: `/unarchive` restores them all, `/unarchive <branch id>` restores one, and `/unarchive list` shows what is hidden.
 - Added archiving from the `/tree` selector: `Shift+A` hides the highlighted branch whether or not it is empty, `Alt+R` reveals archived branches in place, and `Shift+A` on a revealed branch restores it.
 - A session written to two project directories could appear twice while each copy held branches the other had lost; `omp gc --merge-duplicates` now reunites those branches in one destination, backs it up, and archives the consumed duplicate files.
+- Added `omp gc --merge-forks`, which grafts a forked session back into the parent it came from. `/fork` writes a whole new session file — new id, a verbatim copy of the parent's history, and a `parentSession` header — so work done in the fork never shows up in the tree it branched from, and the duplicate pass cannot find it because the two files carry different session ids. The fork's own entries are grafted at the point it diverged, `parentSession` resolves whether it holds an id or a path, and under `--apply` the parent is backed up while the consumed fork is archived with its artifacts rather than deleted.
+- Session-rewriting gc passes now ask the OS whether a session is live — advisory locks, open file handles, POSIX locks — and name the holding process when they skip one, instead of inferring liveness from the file's modification time. A conversation you just closed is no longer mistaken for one that is still open.
 
 ## [17.3.4] - 2026-08-14
 

@@ -8,6 +8,7 @@ import { loadEntriesFromFile } from "@oh-my-pi/pi-coding-agent/session/session-l
 import { computeDefaultSessionDir } from "@oh-my-pi/pi-coding-agent/session/session-paths";
 import { FileSessionStorage } from "@oh-my-pi/pi-coding-agent/session/session-storage";
 import { getSessionsDir } from "@oh-my-pi/pi-utils";
+import { holdFileOpen } from "../helpers/open-file-holder";
 
 const SESSION_ID = "019f6d5f-4aee-7000-a3ab-3b62adc9b302";
 const TIMESTAMP = "2026-07-16T23-59-49-486Z";
@@ -124,30 +125,44 @@ describe("omp gc duplicate-session merge", () => {
 		expect(await backupFiles(pair.destination)).toEqual([]);
 	});
 
-	test("reports a fresh duplicate file and leaves the whole group untouched", async () => {
+	test("merges a fresh duplicate file when no process holds it", async () => {
 		const agentDir = path.join(root, "agent");
 		const pair = await createDivergentPair(agentDir);
-		const destinationBefore = await Bun.file(pair.destination).text();
-		const sourceBefore = await Bun.file(pair.source).text();
 		const now = new Date();
 		await fs.utimes(pair.destination, OLD_DATE, OLD_DATE);
 		await fs.utimes(pair.source, now, now);
 
 		const result = await runGcCommand({ flags: { agentDir, mergeDuplicates: true, apply: true } });
 
-		expect(result.mergeDuplicates?.groups).toBe(0);
-		expect(result.mergeDuplicates?.merged).toBe(0);
-		expect(result.mergeDuplicates?.skippedActive).toBe(2);
-		expect(result.mergeDuplicates?.skipped).toHaveLength(1);
-		expect(result.mergeDuplicates?.skipped[0]?.sessionId).toBe(SESSION_ID);
-		expect(result.mergeDuplicates?.skipped[0]?.path).toBe(pair.source);
-		expect(result.mergeDuplicates?.skipped[0]?.secondsSinceWrite).toBeGreaterThanOrEqual(0);
-		expect(result.mergeDuplicates?.skipped[0]?.secondsSinceWrite).toBeLessThan(60);
-		expect(result.mergeDuplicates?.candidates).toEqual([]);
-		expect(await Bun.file(pair.destination).text()).toBe(destinationBefore);
-		expect(await Bun.file(pair.source).text()).toBe(sourceBefore);
-		expect(stdout).toContain(`duplicates skipped active: ${pair.source} written `);
-		expect(stdout).toContain(" ago, eligible in ");
+		expect(result.mergeDuplicates?.merged).toBe(1);
+		expect(result.mergeDuplicates?.skippedActive).toBe(0);
+		expect(result.mergeDuplicates?.skipped).toEqual([]);
+	});
+
+	test("skips the whole duplicate group when another process holds one file open", async () => {
+		const agentDir = path.join(root, "agent");
+		const pair = await createDivergentPair(agentDir);
+		const destinationBefore = await Bun.file(pair.destination).text();
+		const sourceBefore = await Bun.file(pair.source).text();
+		const holder = await holdFileOpen(pair.source);
+		try {
+			const result = await runGcCommand({ flags: { agentDir, mergeDuplicates: true, apply: true } });
+
+			expect(result.mergeDuplicates?.groups).toBe(0);
+			expect(result.mergeDuplicates?.merged).toBe(0);
+			expect(result.mergeDuplicates?.skippedActive).toBe(2);
+			expect(result.mergeDuplicates?.skipped).toHaveLength(1);
+			expect(result.mergeDuplicates?.skipped[0]?.sessionId).toBe(SESSION_ID);
+			expect(result.mergeDuplicates?.skipped[0]?.path).toBe(pair.source);
+			expect(result.mergeDuplicates?.skipped[0]?.signals).toContain("open-handle");
+			expect(result.mergeDuplicates?.skipped[0]?.holders.some(value => value.pid === holder.pid)).toBe(true);
+			expect(result.mergeDuplicates?.candidates).toEqual([]);
+			expect(await Bun.file(pair.destination).text()).toBe(destinationBefore);
+			expect(await Bun.file(pair.source).text()).toBe(sourceBefore);
+			expect(stdout).toContain(`duplicates skipped: ${pair.source} held open by pid ${holder.pid} (`);
+		} finally {
+			await holder.close();
+		}
 	});
 
 	test("merges an explicitly old duplicate pair without skipped files", async () => {
@@ -161,9 +176,11 @@ describe("omp gc duplicate-session merge", () => {
 		expect(result.mergeDuplicates?.skipped).toEqual([]);
 		expect(result.mergeDuplicates?.merged).toBe(1);
 		expect(result.mergeDuplicates?.archivedSources).toBe(1);
+		// Grafts land next to their parent, so the destination's own last entry
+		// stays last and reopening the session resumes the branch it was on.
 		expect(
 			logicalEntries(await loadEntriesFromFile(pair.destination, new FileSessionStorage())).map(value => value.id),
-		).toEqual(["shared", "destination-branch", "source-branch"]);
+		).toEqual(["shared", "source-branch", "destination-branch"]);
 		expect(stdout).toContain("duplicates: 1/1 file merged across 1 group, 1 entry added");
 	});
 
@@ -197,7 +214,8 @@ describe("omp gc duplicate-session merge", () => {
 		expect(result.mergeDuplicates?.merged).toBe(1);
 		expect(result.mergeDuplicates?.archivedSources).toBe(1);
 		const merged = logicalEntries(await loadEntriesFromFile(pair.destination, new FileSessionStorage()));
-		expect(merged.map(value => value.id)).toEqual(["shared", "destination-branch", "source-branch"]);
+		expect(merged.map(value => value.id)).toEqual(["shared", "source-branch", "destination-branch"]);
+		expect(merged.at(-1)?.id).toBe(pair.destinationBefore.at(-1)?.id);
 		const backups = await backupFiles(pair.destination);
 		expect(backups).toHaveLength(1);
 		expect(await loadEntriesFromFile(backups[0]!, new FileSessionStorage())).toEqual(pair.destinationBefore);

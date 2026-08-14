@@ -16,6 +16,7 @@ import {
 import { Settings } from "../config/settings";
 import { getDefault } from "../config/settings-schema";
 import { BLOB_HASH_RE } from "../session/blob-store";
+import { inspectSessionEmptiness } from "../session/session-emptiness";
 import type { FileEntry, SessionHeader } from "../session/session-entries";
 import { listSessionsReadOnly, type SessionInfo, type SessionStatus } from "../session/session-listing";
 import {
@@ -53,6 +54,7 @@ export interface GcCommandFlags {
 	archive?: boolean;
 	wal?: boolean;
 	mergeSessions?: boolean;
+	pruneEmptySessions?: "archive" | "delete";
 	coldArchiveAfterDays?: number;
 	retainNewestGlobal?: number;
 	retainNewestPerCwd?: number;
@@ -158,6 +160,35 @@ export interface SessionMergeGcResult {
 	errors: string[];
 	livenessDegraded: string[];
 }
+export interface EmptySessionGcCandidate {
+	path: string;
+	sessionId: string;
+	userMessages: number;
+	assistantMessages: number;
+	assistantTextChars: number;
+	unfinishedAttempts: number;
+	bytes: number;
+}
+
+export interface EmptySessionGcSkippedFile {
+	path: string;
+	secondsSinceWrite: number | undefined;
+	signals: LivenessSignal[];
+	holders: LivenessHolder[];
+}
+
+export interface EmptySessionGcResult {
+	scanned: number;
+	empty: number;
+	skippedActive: number;
+	wouldPrune: number;
+	archived: number;
+	deleted: number;
+	candidates: EmptySessionGcCandidate[];
+	skipped: EmptySessionGcSkippedFile[];
+	livenessDegraded: string[];
+	errors: string[];
+}
 
 export interface GcResult {
 	agentDir: string;
@@ -166,6 +197,7 @@ export interface GcResult {
 	archive?: ArchiveGcResult;
 	wal?: WalGcResult;
 	mergeSessions?: SessionMergeGcResult;
+	pruneEmptySessions?: EmptySessionGcResult;
 	lockPath: string;
 	livenessDegraded: string[];
 }
@@ -220,6 +252,7 @@ interface ResolvedGcOptions {
 	runArchive: boolean;
 	runWal: boolean;
 	runMergeSessions: boolean;
+	pruneEmptySessions?: "archive" | "delete";
 	coldArchiveAfterDays: number;
 	retainNewestGlobal: number;
 	retainNewestPerCwd: number;
@@ -257,7 +290,11 @@ function numberSetting(value: number | undefined, fallback: unknown, defaultValu
 async function resolveOptions(flags: GcCommandFlags): Promise<ResolvedGcOptions> {
 	const agentDir = path.resolve(flags.agentDir ?? getAgentDir());
 	const selected =
-		flags.blobs === true || flags.archive === true || flags.wal === true || flags.mergeSessions === true;
+		flags.blobs === true ||
+		flags.archive === true ||
+		flags.wal === true ||
+		flags.mergeSessions === true ||
+		flags.pruneEmptySessions !== undefined;
 	const archiveSelected = selected && flags.archive === true;
 	const needsArchiveSettings =
 		archiveSelected &&
@@ -281,6 +318,7 @@ async function resolveOptions(flags: GcCommandFlags): Promise<ResolvedGcOptions>
 		runArchive: selected ? flags.archive === true : getBoolean("gc.archive"),
 		runWal: selected ? flags.wal === true : getBoolean("gc.wal"),
 		runMergeSessions: flags.mergeSessions === true,
+		pruneEmptySessions: flags.pruneEmptySessions,
 		coldArchiveAfterDays: numberSetting(
 			flags.coldArchiveAfterDays,
 			getNumber("gc.coldArchiveAfterDays"),
@@ -304,6 +342,7 @@ export function collectGcErrors(result: GcResult): string[] {
 		...(result.blobs?.errors ?? []).map(error => `blobs: ${error}`),
 		...(result.archive?.errors ?? []).map(error => `archive: ${error}`),
 		...(result.mergeSessions?.errors ?? []).map(error => `merge: ${error}`),
+		...(result.pruneEmptySessions?.errors ?? []).map(error => `empty sessions: ${error}`),
 	];
 }
 
@@ -1943,6 +1982,79 @@ async function mergeForkPhase(
 	}
 }
 
+async function runEmptySessionGc(
+	options: ResolvedGcOptions,
+	archiveRoot: string,
+	mode: "archive" | "delete",
+): Promise<EmptySessionGcResult> {
+	const sessionsRoot = getSessionsDir(options.agentDir);
+	const result: EmptySessionGcResult = {
+		scanned: 0,
+		empty: 0,
+		skippedActive: 0,
+		wouldPrune: 0,
+		archived: 0,
+		deleted: 0,
+		candidates: [],
+		skipped: [],
+		errors: [],
+		livenessDegraded: [],
+	};
+	const files = (await collectJsonlFiles(sessionsRoot)).filter(file => isTopLevelSessionFile(sessionsRoot, file));
+	result.scanned = files.length;
+
+	const storage = new FileSessionStorage();
+	const degraded = new Set<string>();
+	for (const file of files) {
+		try {
+			const liveness = await inspectGcLiveness(file, degraded);
+			if (liveness.live) {
+				result.skippedActive++;
+				result.skipped.push({
+					path: file,
+					secondsSinceWrite: liveness.secondsSinceWrite,
+					signals: liveness.signals,
+					holders: liveness.holders,
+				});
+				continue;
+			}
+			const stat = await fs.stat(file);
+
+			const entries = await loadEntriesFromFile(file, storage);
+			const header = entries[0];
+			if (header?.type !== "session") throw new Error("session header missing");
+			const emptiness = inspectSessionEmptiness(entries);
+			if (emptiness.hasResponse) continue;
+
+			result.empty++;
+			result.candidates.push({
+				path: file,
+				sessionId: header.id,
+				userMessages: emptiness.userMessages,
+				assistantMessages: emptiness.assistantMessages,
+				assistantTextChars: emptiness.assistantTextChars,
+				unfinishedAttempts: emptiness.unfinishedAttempts,
+				bytes: stat.size,
+			});
+			result.wouldPrune++;
+			if (!options.apply) continue;
+
+			if (mode === "archive") {
+				await moveDuplicateSourceToArchive(file, sessionsRoot, archiveRoot);
+				result.archived++;
+			} else {
+				await fs.rm(sessionArtifactsPath(file), { recursive: true, force: true });
+				await fs.unlink(file);
+				result.deleted++;
+			}
+		} catch (error) {
+			result.errors.push(`${file}: ${errorMessage(error)}`);
+		}
+	}
+	result.livenessDegraded = [...degraded];
+	return result;
+}
+
 async function checkpointWal(dbPath: string, apply: boolean): Promise<WalCheckpointResult> {
 	const walPath = `${dbPath}-wal`;
 	let walBytes = 0;
@@ -2255,6 +2367,23 @@ function renderText(result: GcResult, options: ResolvedGcOptions): string {
 		}
 		if (merge.errors.length > 0) lines.push(`merge errors: ${merge.errors.length}`);
 	}
+	if (result.pruneEmptySessions && options.pruneEmptySessions) {
+		const empty = result.pruneEmptySessions;
+		const mode = options.pruneEmptySessions;
+		const pastTense = mode === "archive" ? "archived" : "deleted";
+		const affected = mode === "archive" ? empty.archived : empty.deleted;
+		const assistantTextChars = empty.candidates.reduce((sum, candidate) => sum + candidate.assistantTextChars, 0);
+		const summary = result.apply
+			? `empty sessions: ${pastTense} ${affected} of ${empty.empty} empty ${pluralize("session", empty.empty)}`
+			: `empty sessions: would ${mode} ${empty.wouldPrune} of ${empty.empty} empty ${pluralize("session", empty.empty)}`;
+		lines.push(`${summary} (${assistantTextChars} assistant text ${pluralize("character", assistantTextChars)})`);
+		for (const skipped of empty.skipped) {
+			lines.push(
+				`empty sessions skipped: ${shortenPath(skipped.path)} ${formatLivenessReason(skipped.signals, skipped.holders)}`,
+			);
+		}
+		if (empty.errors.length > 0) lines.push(`empty session errors: ${empty.errors.length}`);
+	}
 	if (result.wal) {
 		const state = result.wal.checkpointed ? "checkpointed" : "checkpoint dry-run";
 		lines.push(`wal: ${state}, ${formatBytes(result.wal.walBytes)} across ${result.wal.databases.length} dbs`);
@@ -2277,9 +2406,17 @@ export async function runGcCommand(args: GcCommandArgs): Promise<GcResult> {
 		};
 		if (options.runBlobs) next.blobs = await runBlobGc(options, archiveRoot);
 		if (options.runMergeSessions) next.mergeSessions = await runSessionMergeGc(options, archiveRoot);
+		if (options.pruneEmptySessions) {
+			next.pruneEmptySessions = await runEmptySessionGc(options, archiveRoot, options.pruneEmptySessions);
+		}
 		if (options.runArchive) next.archive = await runArchiveGc(options, archiveRoot);
 		if (options.runWal) next.wal = await runWalGc(options);
-		next.livenessDegraded = [...new Set([...(next.mergeSessions?.livenessDegraded ?? [])])];
+		next.livenessDegraded = [
+			...new Set([
+				...(next.mergeSessions?.livenessDegraded ?? []),
+				...(next.pruneEmptySessions?.livenessDegraded ?? []),
+			]),
+		];
 		return next;
 	});
 

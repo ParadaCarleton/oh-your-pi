@@ -17,6 +17,10 @@ export default class Gc extends Command {
 		"merge-sessions": Flags.boolean({
 			description: "Reunite sessions split across files: duplicate copies and forks",
 		}),
+		"prune-empty-sessions": Flags.string({
+			description: "Prune sessions where the model never spoke or completed a turn: archive (recommended) or delete",
+			options: ["archive", "delete"],
+		}),
 		wal: Flags.boolean({ description: "Checkpoint history/model database WAL files" }),
 		"cold-archive-after-days": Flags.integer({ description: "Minimum session age before archiving" }),
 		"retain-newest-global": Flags.integer({ description: "Always keep this many newest sessions active" }),
@@ -33,6 +37,7 @@ export default class Gc extends Command {
 				blobs: flags.blobs,
 				archive: flags.archive,
 				mergeSessions: flags["merge-sessions"],
+				pruneEmptySessions: flags["prune-empty-sessions"] as "archive" | "delete" | undefined,
 				wal: flags.wal,
 				coldArchiveAfterDays: flags["cold-archive-after-days"],
 				retainNewestGlobal: flags["retain-newest-global"],

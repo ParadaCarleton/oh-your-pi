@@ -2833,6 +2833,13 @@ export class SessionManager {
 	 * verdict and must be left alone. Already-archived branches are outside it
 	 * too — `getTree()` hides them — so archiving a branch also shields it from
 	 * a later prune, which is the point of archiving instead of deleting.
+	 *
+	 * This branch-level rule is deliberately stricter than the flat-file rule
+	 * in `session-emptiness.ts`. Here a `toolUse` message may be unanswered
+	 * because the verdict propagates up from the real reply beneath it. The flat
+	 * session scan has no subtree propagation, so it must count text-bearing
+	 * mid-turn tool calls as responses; otherwise ordinary agent work looks
+	 * empty.
 	 */
 	#emptyBranchVerdict(): { inTree: Set<string>; kept: Set<string>; preOrder: SessionTreeNode[] } {
 		// A reply that stopped on `toolUse` is mid-turn by construction: the model

@@ -50,12 +50,12 @@ export const galleryHelp = {
 } satisfies CommandMetadata;
 
 export const gcHelp = {
-	description: "Run storage garbage collection, including session merges and no-response session pruning",
+	description: "Run storage garbage collection, including session merges and dead-session pruning",
 	examples: [
-		"omp gc --merge-sessions  # Reunite duplicate copies and forks of the same conversation",
+		"omp gc --merge-sessions          # Reunite duplicate copies and forks of the same conversation",
 		"omp gc --merge-sessions --apply  # Same, but actually rewrite the sessions",
-		"omp gc --prune           # Archive conversations nobody asked for and nobody answered",
-		"omp gc --prune delete    # Permanently delete those sessions instead (only with --apply)",
+		"omp gc --prune                   # Archive conversations nobody asked for and nobody answered",
+		"omp gc --prune delete            # Permanently delete those sessions instead (only with --apply)",
 	],
 } satisfies CommandMetadata;
 export const ifBenchHelp = {

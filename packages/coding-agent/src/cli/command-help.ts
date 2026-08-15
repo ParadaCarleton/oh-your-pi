@@ -50,10 +50,10 @@ export const galleryHelp = {
 } satisfies CommandMetadata;
 
 export const gcHelp = {
-	description: "Run storage garbage collection, including duplicate merges and no-response session pruning",
+	description: "Run storage garbage collection, including session merges and no-response session pruning",
 	examples: [
-		"omp gc --merge-duplicates             # Merge split copies of the same session (dry-run by default)",
-		"omp gc --merge-forks                  # Graft forked sessions into their parents (dry-run by default)",
+		"omp gc --merge-sessions                # Reunite duplicate copies and forks of the same conversation",
+		"omp gc --merge-sessions --apply        # Same, but actually rewrite the sessions",
 		"omp gc --prune-empty-sessions archive  # Recommended: archive sessions where the model never spoke or completed a turn",
 		"omp gc --prune-empty-sessions delete   # Permanently delete those sessions (only with --apply)",
 	],

@@ -14,8 +14,9 @@ export default class Gc extends Command {
 		"agent-dir": Flags.string({ description: "Agent directory to maintain" }),
 		blobs: Flags.boolean({ description: "Sweep unreferenced blobs" }),
 		archive: Flags.boolean({ description: "Archive cold sessions" }),
-		"merge-duplicates": Flags.boolean({ description: "Merge duplicate session files that share a session id" }),
-		"merge-forks": Flags.boolean({ description: "Graft forked sessions back into their parent as branches" }),
+		"merge-sessions": Flags.boolean({
+			description: "Reunite sessions split across files: duplicate copies and forks",
+		}),
 		"prune-empty-sessions": Flags.string({
 			description: "Prune sessions where the model never spoke or completed a turn: archive (recommended) or delete",
 			options: ["archive", "delete"],
@@ -35,8 +36,7 @@ export default class Gc extends Command {
 				agentDir: flags["agent-dir"],
 				blobs: flags.blobs,
 				archive: flags.archive,
-				mergeDuplicates: flags["merge-duplicates"],
-				mergeForks: flags["merge-forks"],
+				mergeSessions: flags["merge-sessions"],
 				pruneEmptySessions: flags["prune-empty-sessions"] as "archive" | "delete" | undefined,
 				wal: flags.wal,
 				coldArchiveAfterDays: flags["cold-archive-after-days"],

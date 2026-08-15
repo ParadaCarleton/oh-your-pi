@@ -156,6 +156,7 @@ describe("omp gc fork-session merge", () => {
 				sharedEntries: 2,
 				forkOnlyEntries: 2,
 				attachmentPoints: 1,
+				absorbed: false,
 			},
 		]);
 		expect(await Bun.file(pair.parent).text()).toBe(parentBefore);
@@ -338,25 +339,38 @@ describe("omp gc fork-session merge", () => {
 		expect(second.mergeSessions?.merged).toBe(0);
 	});
 
-	test("does not nominate a fork whose entries are all shared", async () => {
+	test("retires a fork whose entries the parent already has, without rewriting the parent", async () => {
 		const agentDir = path.join(root, "agent");
 		const sessionsRoot = getSessionsDir(agentDir);
 		const projectDir = path.join(sessionsRoot, "-project");
 		const cwd = path.join(root, "project");
-		const shared = entry("shared", null, "shared");
-		await writeSession(projectDir, `${TIMESTAMP}_${PARENT_ID}.jsonl`, header(PARENT_ID, cwd), [shared]);
-		const fork = await writeSession(projectDir, `${TIMESTAMP}_${FORK_ID}.jsonl`, header(FORK_ID, cwd, PARENT_ID), [
-			shared,
+		const shared = [entry("shared-root", null, "shared-root"), entry("attachment", "shared-root", "attachment")];
+		// The parent already holds every entry the fork has — the state an earlier merge
+		// leaves behind. The fork file is then a second copy of one conversation in the
+		// session list, and only archiving it makes the duplicate go away.
+		const parent = await writeSession(projectDir, `${TIMESTAMP}_${PARENT_ID}.jsonl`, header(PARENT_ID, cwd), [
+			...shared,
+			entry("fork-branch", "attachment", "fork"),
 		]);
+		const fork = await writeSession(projectDir, `${TIMESTAMP}_${FORK_ID}.jsonl`, header(FORK_ID, cwd, PARENT_ID), [
+			...shared,
+			entry("fork-branch", "attachment", "fork"),
+		]);
+		const parentBefore = await Bun.file(parent).text();
 
-		const result = await runGcCommand({ flags: { agentDir, mergeSessions: true } });
+		const dryRun = await runGcCommand({ flags: { agentDir, mergeSessions: true } });
 
-		expect(result.mergeSessions?.forkPairs).toBe(0);
-		expect(result.mergeSessions?.candidates).toEqual([]);
-		expect(result.mergeSessions?.skipped).toContainEqual({
-			path: fork,
-			reason: "fork contributes no unique entries",
-		});
+		expect(forkCandidates(dryRun.mergeSessions?.candidates)[0]?.absorbed).toBe(true);
+		expect(dryRun.mergeSessions?.addedEntries).toBe(0);
+		expect(stdout).toContain("1 fork already merged, file retired");
+
+		const applied = await runGcCommand({ flags: { agentDir, mergeSessions: true, apply: true } });
+
+		expect(applied.mergeSessions?.archivedSources).toBe(1);
+		expect(await Bun.file(fork).exists()).toBe(false);
+		// Untouched: no graft to make, so no rewrite and no backup churn on a large file.
+		expect(await Bun.file(parent).text()).toBe(parentBefore);
+		expect(await backupFiles(parent)).toEqual([]);
 	});
 
 	test("skips a fork under a backup directory with a reason", async () => {

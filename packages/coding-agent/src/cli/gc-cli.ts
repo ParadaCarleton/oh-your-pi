@@ -138,6 +138,8 @@ export type SessionMergeCandidate =
 			forkOnlyEntries: number;
 			/** Distinct destination entries that the fork-only subtrees hang from. */
 			attachmentPoints: number;
+			/** Already fully present in the parent: the pass only retires the file. */
+			absorbed: boolean;
 	  };
 
 export interface SessionMergeGcResult {
@@ -246,6 +248,8 @@ interface ForkLineagePair {
 	sharedEntries: number;
 	forkOnlyEntries: number;
 	attachmentPoints: number;
+	/** Every entry is already in the parent: nothing to graft, only the file to retire. */
+	absorbed: boolean;
 }
 
 interface ResolvedGcOptions {
@@ -944,10 +948,10 @@ async function collectForkLineageGroups(
 				loadEntriesFromFile(forkLineage.path, storage),
 			]);
 			const plan = planSessionMerge(parentEntries, forkEntries);
-			if (plan.addedEntries === 0) {
-				result.skipped.push({ path: forkLineage.path, reason: "fork contributes no unique entries" });
-				continue;
-			}
+			// A fork with nothing left to contribute is not a no-op: its content already
+			// lives in the parent, so the file is a second copy of the same conversation
+			// in the session picker. Retire it instead of leaving it there forever.
+			const absorbed = plan.addedEntries === 0;
 			const destinationIds = new Set(parentEntries.filter(entry => entry.type !== "session").map(entry => entry.id));
 			const sourceEntries = forkEntries.filter(entry => entry.type !== "session");
 			const attachmentParents = new Set(
@@ -964,6 +968,7 @@ async function collectForkLineageGroups(
 				sharedEntries: sourceEntries.filter(entry => destinationIds.has(entry.id)).length,
 				forkOnlyEntries: plan.addedEntries,
 				attachmentPoints: attachmentParents.size,
+				absorbed,
 			});
 		} catch (error) {
 			result.errors.push(`${forkLineage.path}: ${errorMessage(error)}`);
@@ -1931,18 +1936,21 @@ async function mergeForkPhase(
 			sharedEntries: pair.sharedEntries,
 			forkOnlyEntries: pair.forkOnlyEntries,
 			attachmentPoints: pair.attachmentPoints,
+			absorbed: pair.absorbed,
 		})),
 	);
 	if (!options.apply) return;
 
 	const storage = new FileSessionStorage();
 	for (const pair of pairs) {
-		let parentContent: string;
+		let parentContent: string | undefined;
 		try {
-			parentContent = await Bun.file(pair.parent.path).text();
-			const backupTimestamp = new Date().toISOString().replaceAll(":", "-");
-			await Bun.write(`${pair.parent.path}.${backupTimestamp}.bak`, parentContent);
-			await storage.writeTextAtomic(pair.parent.path, serializeMergedSession(parentContent, pair.plan.merged));
+			if (!pair.absorbed) {
+				parentContent = await Bun.file(pair.parent.path).text();
+				const backupTimestamp = new Date().toISOString().replaceAll(":", "-");
+				await Bun.write(`${pair.parent.path}.${backupTimestamp}.bak`, parentContent);
+				await storage.writeTextAtomic(pair.parent.path, serializeMergedSession(parentContent, pair.plan.merged));
+			}
 		} catch (error) {
 			result.errors.push(`${pair.parent.path}: ${errorMessage(error)}`);
 			continue;
@@ -1956,7 +1964,7 @@ async function mergeForkPhase(
 			result.merged += 1;
 		} catch (error) {
 			try {
-				await storage.writeTextAtomic(pair.parent.path, parentContent);
+				if (parentContent !== undefined) await storage.writeTextAtomic(pair.parent.path, parentContent);
 			} catch (rollbackError) {
 				result.errors.push(
 					`${pair.fork.path}: ${errorMessage(error)}; parent rollback failed: ${errorMessage(rollbackError)}`,
@@ -2377,12 +2385,19 @@ function renderText(result: GcResult, options: ResolvedGcOptions): string {
 			(sum, candidate) => (candidate.kind === "fork" ? sum + candidate.attachmentPoints : sum),
 			0,
 		);
+		const absorbedForks = merge.candidates.reduce(
+			(sum, candidate) => (candidate.kind === "fork" && candidate.absorbed ? sum + 1 : sum),
+			0,
+		);
 		const detail = [
 			merge.duplicateGroups > 0
 				? `${duplicateCopies} duplicate ${pluralize("copy", duplicateCopies)} of ${merge.duplicateGroups} ${pluralize("session", merge.duplicateGroups)}`
 				: undefined,
-			merge.forkPairs > 0
-				? `${merge.forkPairs} ${pluralize("fork", merge.forkPairs)} at ${attachmentPoints} attachment ${pluralize("point", attachmentPoints)}`
+			merge.forkPairs > absorbedForks
+				? `${merge.forkPairs - absorbedForks} ${pluralize("fork", merge.forkPairs - absorbedForks)} at ${attachmentPoints} attachment ${pluralize("point", attachmentPoints)}`
+				: undefined,
+			absorbedForks > 0
+				? `${absorbedForks} ${pluralize("fork", absorbedForks)} already merged, ${absorbedForks === 1 ? "file" : "files"} retired`
 				: undefined,
 		].filter((part): part is string => part !== undefined);
 		const breakdown = detail.length > 0 ? ` (${detail.join("; ")})` : "";

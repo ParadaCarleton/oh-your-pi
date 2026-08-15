@@ -16,6 +16,21 @@ rebases `omp-fork` onto current upstream before building. Consequences:
 - The build follows whatever `HEAD` points at. Leaving the worktree checked out
   on a `pr/*` branch silently ships a different feature set — check out
   `omp-fork` in the same turn you finish with a PR branch.
+- `ompf` now refuses to build when the worktree is not on `omp-fork` (guard added
+  after a PR branch, which is cut from upstream and has no `scripts/ompf-compile.ts`,
+  turned every launch into "Module not found" plus a silent fall back to a stale
+  binary). `OMPF_BRANCH` overrides the expected branch.
+
+## Subagents: name the directory they will actually be in
+
+Two `--merge-sessions` attempts failed and left `gc-cli.ts` half-renamed. The
+second revealed why: the subagent worked in `~/Projects/oh-my-pi` — the session
+cwd — not the `~/.local/share/omp-fork` worktree its brief named. Both share one
+`.git`, so the edits landed on whatever branch that checkout happened to have.
+Before delegating anything that edits files: put the work on the branch the agent
+will actually see, or have it `cd` and confirm with `git -C <dir> status -sb`
+first. And never check a second branch out of a shared repo while an agent is
+running — that is how the same worktree ends up with two writers.
 
 ## Refuted readings
 
@@ -44,6 +59,32 @@ rebases `omp-fork` onto current upstream before building. Consequences:
   Deliberately not: the text before the token-limit cut is real content. Only
   `error`, `aborted`, and `toolUse` count as unanswered. Pinned by
   `test/session-manager/tree-traversal.test.ts`.
+- **"Session-level emptiness is the `/prune` branch rule applied file-wide."**
+  It is not. `#emptyBranchVerdict()` can treat a `toolUse` reply as unanswered
+  because the real answer hangs *beneath* it and the verdict propagates up the
+  tree. Flattened over a whole file there is no propagation, and nearly every
+  assistant message in an agent loop ends on a tool call, so the flat rule
+  condemns ordinary work: it flagged 4 of 129 real sessions here, including a
+  411 KB one holding 6,528 characters of assistant prose. The session rule is
+  "any assistant message carried text or ended its turn normally".
+- **"`parentSession` holds a session id."** Sometimes a path, absolute or
+  relative. Resolving only the id form made lineage discovery report
+  `parent session <existing path> is missing` and silently hide an 8.4 MB fork.
+- **"A read-only probe can open a session with `SessionManager.open`."** Fine as
+  it turns out — replaying the probe against a copy left the line count
+  unchanged — but `session_exit` breadcrumbs carry no pid or cwd, so you cannot
+  attribute one to a process afterwards. Do not guess who wrote what; measure.
+- **"mtime tells you whether a session is live."** It cannot distinguish closed a
+  minute ago from open right now, and the 5-minute grace refused merges on
+  conversations the user had just closed. `session-liveness.ts` asks the OS
+  instead: omp's advisory lock, `/proc/*/fd` (or `lsof`), and `/proc/locks` by
+  device+inode. The last matters because omp's Linux lock is an abstract Unix
+  socket and never appears in `/proc/locks`.
+- **"A flag can default to a value when passed bare."** Not through this CLI
+  layer without help: it wraps `node:util.parseArgs`, which rejects a bare
+  `--flag` for a string option, and `default:` fires when the flag is *absent*
+  (which would arm a destructive pass on every run). Use
+  `Flags.string({ optionalValue })`, added in `packages/utils/src/cli.ts`.
 
 ## Fork features not upstream
 

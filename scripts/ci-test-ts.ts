@@ -3,6 +3,17 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { $which } from "@oh-my-pi/pi-utils";
+
+/** The developer's real home, whose ~/.omp each test chunk must not touch. */
+const realHome = os.homedir();
+
+/**
+ * bubblewrap, when available. Absent on macOS and on Linux without user
+ * namespaces, where chunks run unsandboxed — the test-time `PI_CODING_AGENT_DIR`
+ * redirect in `packages/coding-agent/test/helpers/` is the fallback.
+ */
+const bwrapPath = $which("bwrap");
 
 type Mode =
 	| "all"
@@ -411,7 +422,7 @@ async function runTestCommand(testCommand: TestCommand): Promise<void> {
 
 	const env = buildChildEnv();
 	for (let attempt = 1; ; attempt++) {
-		const proc = Bun.spawn(testCommand.command, {
+		const proc = Bun.spawn(sandboxedCommand(testCommand.command), {
 			cwd,
 			env,
 			stdout: "inherit",
@@ -437,6 +448,32 @@ async function runTestCommand(testCommand: TestCommand): Promise<void> {
 		}
 		throw new Error(`${testCommand.label} ${describeChunkFailure(exitCode, timedOut)}: ${renderedCommand}`);
 	}
+}
+
+// `bun test` sandboxes nothing: a test runs against the developer's real home,
+// so code under test that resolves a path from it writes there for real. That is
+// how 42 junk session directories — 13 holding a fake one-line "ok" transcript
+// the session picker showed as a real conversation — accumulated in one
+// machine's ~/.omp/agent/sessions, from tests that passed a temp cwd but
+// inherited the real agent dir.
+//
+// So don't redirect paths, remove the ability to write them: run each chunk in a
+// mount namespace where ~/.omp is a tmpfs. Writes succeed, the code under test
+// is unmodified, and everything vanishes with the namespace. Redirecting
+// home-derived env vars instead was tried and is worse — `os.homedir()` is
+// resolved once at Bun startup so it ignores a later HOME, and repointing
+// XDG_CONFIG_HOME broke the fish user-shell test, which sets HOME for its own
+// child and expects fish's config to follow it.
+//
+// Everything else stays real and readable: gitconfig for the worktree tests, the
+// bun module cache, the natives addon.
+//
+// Children are told, via PI_TEST_SANDBOXED in buildChildEnv, because in here
+// ~/.omp is a tmpfs: a leak check comparing its contents would be inspecting the
+// throwaway copy and flagging writes the namespace already contained.
+function sandboxedCommand(command: string[]): string[] {
+	if (!bwrapPath) return command;
+	return [bwrapPath, "--dev-bind", "/", "/", "--tmpfs", path.join(realHome, ".omp"), "--", ...command];
 }
 
 // Child env shared by every spawned test process: the parent env with the
@@ -468,6 +505,7 @@ function buildChildEnv(): Record<string, string | undefined> {
 		PI_TEST_RUNTIME: "1",
 		BUN_JSC_useConcurrentGC: "0",
 		BUN_JSC_numberOfGCMarkers: "1",
+		PI_TEST_SANDBOXED: bwrapPath ? "1" : undefined,
 	};
 	for (const key of Object.keys(env)) {
 		if (isScrubbedEnvVar(key)) {
@@ -824,7 +862,7 @@ export async function runTestCommandsInParallel(commands: TestCommand[], concurr
 	async function runAttempt(
 		testCommand: TestCommand,
 	): Promise<{ exitCode: number; output: string; timedOut: boolean }> {
-		const proc = Bun.spawn(testCommand.command, {
+		const proc = Bun.spawn(sandboxedCommand(testCommand.command), {
 			cwd: path.join(repoRoot, testCommand.cwd),
 			env,
 			stdout: "pipe",

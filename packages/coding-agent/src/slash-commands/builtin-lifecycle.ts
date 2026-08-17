@@ -187,6 +187,10 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 			const edited = await runtime.ctx.showHookEditor("Edit compaction summary", entry.summary);
 			if (edited === undefined || edited === entry.summary) return;
 			await runtime.ctx.sessionManager.updateLatestCompactionSummary(edited);
+			// Rebuild the live agent context so the next provider request carries
+			// the edited summary, not the CompactionSummaryMessage built pre-edit
+			// (#8281 review). Non-interactive runtimes may lack the live session.
+			runtime.ctx.session?.rebuildContextAfterCompactionEdit();
 			runtime.ctx.showStatus("Compaction summary updated.");
 		},
 	},

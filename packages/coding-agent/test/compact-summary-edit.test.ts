@@ -1,11 +1,8 @@
 import { describe, expect, it, vi } from "bun:test";
-import * as path from "node:path";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
-import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { getLatestCompactionEntry } from "@oh-my-pi/pi-coding-agent/session/session-context";
-import {
-	executeAcpBuiltinSlashCommand,
-} from "@oh-my-pi/pi-coding-agent/slash-commands/acp-builtins";
+import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { executeAcpBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/acp-builtins";
 import { executeBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import type { SlashCommandRuntime, TuiSlashCommandRuntime } from "@oh-my-pi/pi-coding-agent/slash-commands/types";
 import { TempDir } from "@oh-my-pi/pi-utils";
@@ -29,6 +26,32 @@ describe("compaction summary editing (issue #8281)", () => {
 	it("returns null when the session has no compaction entry", async () => {
 		const manager = SessionManager.inMemory();
 		expect(await manager.updateLatestCompactionSummary("edited summary")).toBeNull();
+	});
+
+	it("rewrites the OpenAI remote-compaction replay summary on edit (#8281 review)", async () => {
+		const manager = SessionManager.inMemory();
+		const remote = {
+			provider: "openai",
+			replacementHistory: [
+				{ type: "compaction_summary", summary: "original remote summary" },
+				{ type: "message", role: "user", content: [{ type: "input_text", text: "kept" }] },
+			],
+		};
+		manager.appendCompaction("original summary", "orig", "entry-1", 100, undefined, undefined, {
+			openaiRemoteCompaction: remote,
+		});
+
+		await manager.updateLatestCompactionSummary("edited summary");
+
+		const entry = getLatestCompactionEntry(manager.getBranch());
+		const payload = entry?.preserveData?.openaiRemoteCompaction as {
+			replacementHistory?: Array<{ type?: string; summary?: string }>;
+		};
+		const summaryItem = payload?.replacementHistory?.find(item => item.type === "compaction_summary");
+		expect(summaryItem?.summary).toBe("edited summary");
+		// Non-summary replay items are untouched.
+		const messageItem = payload?.replacementHistory?.find(item => item.type === "message");
+		expect(messageItem?.summary).toBeUndefined();
 	});
 
 	it("persists the edit so a resume keeps it", async () => {
@@ -63,11 +86,14 @@ describe("/compact-edit dispatch (issue #8281)", () => {
 		const manager = SessionManager.inMemory();
 		manager.appendCompaction("original summary", "orig", "entry-1", 100);
 		const h = tuiRuntime(manager, "edited summary");
+		const rebuildContextAfterCompactionEdit = vi.fn();
+		h.runtime.ctx.session = { rebuildContextAfterCompactionEdit } as never;
 
 		await executeBuiltinSlashCommand("/compact-edit", h.runtime);
 
 		expect(h.showHookEditor).toHaveBeenCalledWith("Edit compaction summary", "original summary");
 		expect(getLatestCompactionEntry(manager.getBranch())?.summary).toBe("edited summary");
+		expect(rebuildContextAfterCompactionEdit).toHaveBeenCalled();
 		expect(h.showStatus).toHaveBeenCalledWith("Compaction summary updated.");
 		expect(h.showWarning).not.toHaveBeenCalled();
 	});

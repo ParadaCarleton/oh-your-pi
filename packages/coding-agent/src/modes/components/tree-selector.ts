@@ -47,6 +47,8 @@ interface FlatNode {
 	gutters: GutterInfo[];
 	/** True if this node is a root under a virtual branching root (multiple roots) */
 	isVirtualRootChild: boolean;
+	/** True when the flatten saw several roots, so rendering shifts them back to column 0 */
+	multipleRoots: boolean;
 }
 
 /** Filter mode for tree display */
@@ -155,9 +157,9 @@ class TreeList implements Component {
 	#filterMode: FilterMode;
 	#searchQuery = "";
 	#toolCallMap: Map<string, ToolCallInfo> = new Map();
-	#multipleRoots = false;
 	#activePathIds: Set<string> = new Set();
 	#lastSelectedId: string | null = null;
+	#tree: SessionTreeNode[] = [];
 
 	onSelect?: (entryId: string, options: { summarize: boolean }) => void;
 	onCancel?: () => void;
@@ -171,8 +173,9 @@ class TreeList implements Component {
 		initialSelectedId?: string,
 	) {
 		this.#filterMode = initialFilterMode;
-		this.#multipleRoots = tree.length > 1;
-		this.#flatNodes = this.#flattenTree(tree);
+		this.#tree = tree;
+		this.#collectToolCalls(tree);
+		this.#flatNodes = this.#flattenTree(tree, () => true);
 		this.#buildActivePath();
 		this.#applyFilter();
 
@@ -233,9 +236,42 @@ class TreeList implements Component {
 		return this.#filteredNodes.length - 1;
 	}
 
-	#flattenTree(roots: SessionTreeNode[]): FlatNode[] {
-		const result: FlatNode[] = [];
+	/** Tool calls resolve labels for tool results, so they come from the whole tree. */
+	#collectToolCalls(roots: SessionTreeNode[]): void {
 		this.#toolCallMap.clear();
+		const stack = [...roots];
+		while (stack.length > 0) {
+			const entry = stack.pop()!;
+			for (const child of entry.children) stack.push(child);
+			if (entry.entry.type !== "message" || entry.entry.message.role !== "assistant") continue;
+			const content = (entry.entry.message as { content?: unknown }).content;
+			if (!Array.isArray(content)) continue;
+			for (const block of content) {
+				if (typeof block === "object" && block !== null && "type" in block && block.type === "toolCall") {
+					const tc = block as { id: string; name: string; arguments: Record<string, unknown> };
+					this.#toolCallMap.set(tc.id, { name: tc.name, arguments: tc.arguments });
+				}
+			}
+		}
+	}
+
+	/**
+	 * The visible descendants that stand in for a hidden node's children, so a
+	 * filtered row never owns a connector and never contributes an indent level.
+	 */
+	#visibleDescendants(children: SessionTreeNode[], isVisible: (node: SessionTreeNode) => boolean): SessionTreeNode[] {
+		const visible: SessionTreeNode[] = [];
+		const pending = [...children].reverse();
+		while (pending.length > 0) {
+			const candidate = pending.pop()!;
+			if (isVisible(candidate)) visible.push(candidate);
+			else for (let i = candidate.children.length - 1; i >= 0; i--) pending.push(candidate.children[i]);
+		}
+		return visible;
+	}
+
+	#flattenTree(roots: SessionTreeNode[], isVisible: (node: SessionTreeNode) => boolean): FlatNode[] {
+		const result: FlatNode[] = [];
 
 		// A real branch point adds one indentation level. Linear conversation
 		// chains retain that level so their text stays aligned with the branch
@@ -276,8 +312,11 @@ class TreeList implements Component {
 
 		// Add roots in reverse order, prioritizing the one containing the active leaf
 		// If multiple roots, treat them as children of a virtual root that branches
-		const multipleRoots = roots.length > 1;
-		const orderedRoots = [...roots].sort((a, b) => Number(containsActive.get(b)) - Number(containsActive.get(a)));
+		const visibleRoots = this.#visibleDescendants(roots, isVisible);
+		const multipleRoots = visibleRoots.length > 1;
+		const orderedRoots = [...visibleRoots].sort(
+			(a, b) => Number(containsActive.get(b)) - Number(containsActive.get(a)),
+		);
 		for (let i = orderedRoots.length - 1; i >= 0; i--) {
 			const isLast = i === orderedRoots.length - 1;
 			stack.push([orderedRoots[i], multipleRoots ? 1 : 0, multipleRoots, isLast, [], multipleRoots]);
@@ -286,23 +325,9 @@ class TreeList implements Component {
 		while (stack.length > 0) {
 			const [node, indent, showConnector, isLast, gutters, isVirtualRootChild] = stack.pop()!;
 
-			// Extract tool calls from assistant messages for later lookup
-			const entry = node.entry;
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				const content = (entry.message as { content?: unknown }).content;
-				if (Array.isArray(content)) {
-					for (const block of content) {
-						if (typeof block === "object" && block !== null && "type" in block && block.type === "toolCall") {
-							const tc = block as { id: string; name: string; arguments: Record<string, unknown> };
-							this.#toolCallMap.set(tc.id, { name: tc.name, arguments: tc.arguments });
-						}
-					}
-				}
-			}
+			result.push({ node, indent, showConnector, isLast, gutters, isVirtualRootChild, multipleRoots });
 
-			result.push({ node, indent, showConnector, isLast, gutters, isVirtualRootChild });
-
-			const children = node.children;
+			const children = this.#visibleDescendants(node.children, isVisible);
 			const multipleChildren = children.length > 1;
 
 			// Order children so the branch containing the active leaf comes first
@@ -330,7 +355,7 @@ class TreeList implements Component {
 			const connectorDisplayed = showConnector && !isVirtualRootChild;
 			// When connector is displayed, add a gutter entry at the connector's position
 			// Connector is at position (displayIndent - 1), so gutter should be there too
-			const currentDisplayIndent = this.#multipleRoots ? Math.max(0, indent - 1) : indent;
+			const currentDisplayIndent = multipleRoots ? Math.max(0, indent - 1) : indent;
 			const connectorPosition = Math.max(0, currentDisplayIndent - 1);
 			const childGutters: GutterInfo[] = connectorDisplayed
 				? [...gutters, { position: connectorPosition, show: !isLast }]
@@ -355,8 +380,8 @@ class TreeList implements Component {
 
 		const searchTokens = this.#searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
 
-		this.#filteredNodes = this.#flatNodes.filter(flatNode => {
-			const entry = flatNode.node.entry;
+		const isVisible = (treeNode: SessionTreeNode): boolean => {
+			const entry = treeNode.entry;
 			const isCurrentLeaf = entry.id === this.currentLeafId;
 
 			// Skip assistant messages with only tool calls (no text) unless error/aborted
@@ -399,7 +424,7 @@ class TreeList implements Component {
 					break;
 				case "labeled-only":
 					// Just labeled entries
-					passesFilter = flatNode.node.label !== undefined;
+					passesFilter = treeNode.label !== undefined;
 					break;
 				case "all":
 					// Show everything
@@ -415,12 +440,14 @@ class TreeList implements Component {
 
 			// Apply fuzzy search filter
 			if (searchTokens.length > 0) {
-				const nodeText = this.#getSearchableText(flatNode.node);
+				const nodeText = this.#getSearchableText(treeNode);
 				return searchTokens.every(token => fuzzyMatch(token, nodeText).matches);
 			}
 
 			return true;
-		});
+		};
+
+		this.#filteredNodes = this.#flattenTree(this.#tree, isVisible);
 
 		// Try to preserve cursor on the same node, or find nearest visible ancestor
 		if (this.#lastSelectedId) {
@@ -619,7 +646,7 @@ class TreeList implements Component {
 			const cursor = isSelected ? theme.fg("accent", "› ") : "  ";
 
 			// If multiple roots, shift display (roots at 0, not 1)
-			const displayIndent = this.#multipleRoots ? Math.max(0, flatNode.indent - 1) : flatNode.indent;
+			const displayIndent = flatNode.multipleRoots ? Math.max(0, flatNode.indent - 1) : flatNode.indent;
 
 			// Build prefix with gutters at their correct positions, clamped to
 			// `maxIndentLevels` cells so the content always fits. When clamped, the

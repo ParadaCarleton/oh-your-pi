@@ -50,6 +50,15 @@ function numberField(record: Record<string, unknown>, key: string): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * Parent link for a record. Compaction boundaries carry the pre-compaction leaf
+ * in `logicalParentUuid` and a null `parentUuid`, so reading only the latter
+ * shatters one conversation into an orphan root per compaction.
+ */
+function parentUuidOf(record: Record<string, unknown>): string | undefined {
+	return stringField(record, "logicalParentUuid") ?? stringField(record, "parentUuid");
+}
+
 function timestampMs(value: unknown, fallback: number): number {
 	if (typeof value === "number" && Number.isFinite(value)) return value;
 	if (typeof value === "string") {
@@ -233,13 +242,7 @@ function convertRecord(
 	fallbackTimestamp: number,
 	toolNames: Map<string, string>,
 ): ConvertedMessage[] {
-	if (
-		(record.type !== "user" && record.type !== "assistant") ||
-		record.isSidechain === true ||
-		record.isMeta === true
-	) {
-		return [];
-	}
+	if ((record.type !== "user" && record.type !== "assistant") || record.isMeta === true) return [];
 	if (!isRecord(record.message)) return [];
 	const timestamp = timestampMs(record.timestamp, fallbackTimestamp);
 	if (record.type === "assistant") {
@@ -301,6 +304,157 @@ function uniqueEntryId(base: string, used: Set<string>): string {
 	return id;
 }
 
+/** Cross-file state shared by a session and the subagent transcripts grafted into it. */
+interface IngestState {
+	readonly manager: SessionManager;
+	readonly usedIds: Set<string>;
+	readonly toolNames: Map<string, string>;
+	/** Entry that emitted each tool call, so a subagent transcript grafts onto its spawning call. */
+	readonly toolCallEntries: Map<string, string>;
+	synthetic: number;
+	lastEntryId: string | null;
+}
+
+/** Converts one transcript's records into entries, rooting parentless records at `rootParentId`. */
+function ingestTranscript(
+	state: IngestState,
+	records: readonly ForeignJsonRecord[],
+	fallbackTimestamp: number,
+	rootParentId: string | null,
+): void {
+	const sourceParents = new Map<string, string | null>();
+	for (const { value } of records) {
+		const uuid = stringField(value, "uuid");
+		if (uuid) sourceParents.set(uuid, parentUuidOf(value) ?? null);
+	}
+	// Ids are allocated for every record before any parent is resolved, because
+	// Claude writes a record ahead of its parent often enough that a streaming
+	// lookup would orphan the child into a root of its own.
+	const sourceTails = new Map<string, string>();
+	const planned: Array<{
+		readonly converted: ConvertedMessage[];
+		readonly sourceUuid: string;
+		readonly parentUuid: string | undefined;
+		readonly timestamp: string;
+		readonly modelChange?: { readonly id: string; readonly model: string };
+		readonly ids: string[];
+	}> = [];
+	let lastModel: string | undefined;
+	for (const { value, line } of records) {
+		const converted = convertRecord(value, fallbackTimestamp, state.toolNames);
+		if (converted.length === 0) continue;
+		const sourceUuid = stringField(value, "uuid") ?? `line-${line}`;
+		let modelChange: { id: string; model: string } | undefined;
+		if (value.type === "assistant" && isRecord(value.message)) {
+			const model = stringField(value.message, "model");
+			if (model && model !== lastModel) {
+				modelChange = { id: uniqueEntryId(`claude-${sourceUuid}-model`, state.usedIds), model };
+				lastModel = model;
+			}
+		}
+		const ids = converted.map(item => {
+			state.synthetic += 1;
+			return uniqueEntryId(`claude-${sourceUuid}-${item.suffix}-${state.synthetic}`, state.usedIds);
+		});
+		const tail = ids.at(-1);
+		if (tail) sourceTails.set(sourceUuid, tail);
+		planned.push({
+			converted,
+			sourceUuid,
+			parentUuid: parentUuidOf(value),
+			timestamp: isoTimestamp(value.timestamp, fallbackTimestamp),
+			modelChange,
+			ids,
+		});
+	}
+
+	/** Nearest ancestor that survived conversion, walking past dropped records. */
+	const resolveParent = (sourceId: string | undefined): string | null => {
+		const seen = new Set<string>();
+		let cursor = sourceId;
+		while (cursor && !seen.has(cursor)) {
+			seen.add(cursor);
+			const retained = sourceTails.get(cursor);
+			if (retained) return retained;
+			cursor = sourceParents.get(cursor) ?? undefined;
+		}
+		return rootParentId;
+	};
+
+	for (const record of planned) {
+		let parentId = resolveParent(record.parentUuid);
+		if (record.modelChange) {
+			const entry: ModelChangeEntry = {
+				type: "model_change",
+				id: record.modelChange.id,
+				parentId,
+				timestamp: record.timestamp,
+				model: `anthropic/${record.modelChange.model}`,
+			};
+			state.manager.ingestReplicatedEntry(entry);
+			parentId = entry.id;
+		}
+		for (const [index, item] of record.converted.entries()) {
+			const id = record.ids[index];
+			if (!id) continue;
+			const entry: SessionMessageEntry = {
+				type: "message",
+				id,
+				parentId,
+				timestamp: record.timestamp,
+				message: item.message,
+			};
+			state.manager.ingestReplicatedEntry(entry);
+			if (item.message.role === "assistant") {
+				for (const block of item.message.content) {
+					if (block.type === "toolCall") state.toolCallEntries.set(block.id, id);
+				}
+			}
+			parentId = id;
+			state.lastEntryId = id;
+		}
+	}
+}
+
+/** A subagent transcript stored beside its session, with the tool call that spawned it. */
+interface SubagentTranscript {
+	readonly records: ForeignJsonRecord[];
+	readonly modifiedMs: number;
+	readonly startedMs: number;
+	readonly toolUseId?: string;
+}
+
+/**
+ * Reads the `<session>/subagents/` transcripts Claude writes for Task calls.
+ * Each `.meta.json` names the spawning tool call; transcripts whose call is
+ * missing from the session still load, rooted at the session instead.
+ */
+async function subagentTranscripts(sessionPath: string): Promise<SubagentTranscript[]> {
+	const directory = path.join(path.dirname(sessionPath), path.basename(sessionPath, ".jsonl"), "subagents");
+	const listed = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+	const names = listed
+		.filter(entry => entry.isFile() && entry.name.endsWith(".jsonl"))
+		.map(entry => entry.name)
+		.sort();
+	const found: SubagentTranscript[] = [];
+	for (const name of names) {
+		const file = path.join(directory, name);
+		const [records, stats, meta] = await Promise.all([
+			collectForeignJsonRecords(file).catch(() => []),
+			fs.stat(file).catch(() => undefined),
+			Bun.file(path.join(directory, `${path.basename(name, ".jsonl")}.meta.json`))
+				.json()
+				.catch(() => undefined),
+		]);
+		if (records.length === 0) continue;
+		const toolUseId = isRecord(meta) ? stringField(meta, "toolUseId") : undefined;
+		const modifiedMs = stats?.mtimeMs ?? Date.now();
+		const startedMs = Math.min(...records.map(record => timestampMs(record.value.timestamp, modifiedMs)));
+		found.push({ records, modifiedMs, startedMs, toolUseId });
+	}
+	return found;
+}
+
 /** Imports Claude Code JSONL sessions into non-persistent OMP session managers. */
 export class ClaudeSessionStore implements ForeignSessionStore {
 	readonly source = "claude";
@@ -358,67 +512,50 @@ export class ClaudeSessionStore implements ForeignSessionStore {
 		if (records.length === 0 && stats.size > 0)
 			throw new Error(`Claude session ${info.id} contains no readable records`);
 
-		const sourceParents = new Map<string, string | null>();
 		let sourceCwd: string | undefined;
 		let sourceTitle: string | undefined;
 		let aiTitle: string | undefined;
 		for (const { value } of records) {
-			const uuid = stringField(value, "uuid");
-			if (uuid) sourceParents.set(uuid, stringField(value, "parentUuid") ?? null);
 			if (!sourceCwd) sourceCwd = stringField(value, "cwd");
 			if (value.type === "custom-title") sourceTitle = stringField(value, "customTitle") ?? sourceTitle;
 			if (value.type === "ai-title") aiTitle = stringField(value, "aiTitle") ?? aiTitle;
 		}
 
 		const manager = SessionManager.inMemory(sourceCwd ?? info.cwd);
-		const sourceTails = new Map<string, string>();
-		const usedIds = new Set<string>();
-		const toolNames = new Map<string, string>();
-		let lastModel: string | undefined;
-		let synthetic = 0;
-		const resolveParent = (sourceId: string | undefined): string | null => {
-			const seen = new Set<string>();
-			let cursor = sourceId;
-			while (cursor && !seen.has(cursor)) {
-				seen.add(cursor);
-				const retained = sourceTails.get(cursor);
-				if (retained) return retained;
-				cursor = sourceParents.get(cursor) ?? undefined;
-			}
-			return null;
+		const state: IngestState = {
+			manager,
+			usedIds: new Set(),
+			toolNames: new Map(),
+			toolCallEntries: new Map(),
+			synthetic: 0,
+			lastEntryId: null,
 		};
+		ingestTranscript(state, records, stats.mtimeMs, null);
 
-		for (const { value, line } of records) {
-			const converted = convertRecord(value, stats.mtimeMs, toolNames);
-			if (converted.length === 0) continue;
-			const sourceUuid = stringField(value, "uuid") ?? `line-${line}`;
-			let parentId = resolveParent(stringField(value, "parentUuid"));
-			const timestamp = isoTimestamp(value.timestamp, stats.mtimeMs);
-			if (value.type === "assistant" && isRecord(value.message)) {
-				const model = stringField(value.message, "model");
-				if (model && model !== lastModel) {
-					const id = uniqueEntryId(`claude-${sourceUuid}-model`, usedIds);
-					const entry: ModelChangeEntry = {
-						type: "model_change",
-						id,
-						parentId,
-						timestamp,
-						model: `anthropic/${model}`,
-					};
-					manager.ingestReplicatedEntry(entry);
-					parentId = id;
-					lastModel = model;
-				}
+		// Subagent transcripts hang off the Task call that spawned them, so the
+		// leaf returns to the session's own tail once they are grafted.
+		const sessionTail = state.lastEntryId;
+		const timeline = manager
+			.getEntries()
+			.map(entry => ({ time: Date.parse(entry.timestamp), id: entry.id }))
+			.filter(item => Number.isFinite(item.time))
+			.sort((left, right) => left.time - right.time);
+		/** Entry the session was on when a subagent began, for transcripts naming no tool call. */
+		const runningAt = (startedMs: number): string | null => {
+			let candidate: string | null = null;
+			for (const item of timeline) {
+				if (item.time > startedMs) break;
+				candidate = item.id;
 			}
-			for (const item of converted) {
-				synthetic += 1;
-				const id = uniqueEntryId(`claude-${sourceUuid}-${item.suffix}-${synthetic}`, usedIds);
-				const entry: SessionMessageEntry = { type: "message", id, parentId, timestamp, message: item.message };
-				manager.ingestReplicatedEntry(entry);
-				parentId = id;
-			}
-			if (parentId) sourceTails.set(sourceUuid, parentId);
+			return candidate;
+		};
+		const sessionRoot = manager.getEntries().find(entry => entry.parentId === null)?.id ?? null;
+		for (const subagent of await subagentTranscripts(info.path)) {
+			const spawningCall = subagent.toolUseId ? state.toolCallEntries.get(subagent.toolUseId) : undefined;
+			const graftPoint = spawningCall ?? runningAt(subagent.startedMs) ?? sessionRoot;
+			ingestTranscript(state, subagent.records, subagent.modifiedMs, graftPoint);
 		}
+		if (sessionTail && sessionTail !== state.lastEntryId) manager.branch(sessionTail);
 
 		const title = sourceTitle ?? aiTitle ?? info.title;
 		if (title) await manager.setSessionName(title, sourceTitle ? "user" : "auto");

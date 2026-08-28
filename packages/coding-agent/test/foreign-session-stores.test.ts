@@ -114,6 +114,234 @@ describe("ClaudeSessionStore", () => {
 		expect(messages[0]?.timestamp).toBe("2026-01-01T00:00:00.000Z");
 	});
 
+	it("reattaches a compaction boundary to the leaf it compacted from", async () => {
+		const root = path.join(tempRoot, ".claude");
+		const cwd = path.join(tempRoot, "compacted");
+		const id = "55555555-5555-4555-8555-555555555555";
+		await writeJsonl(path.join(root, "projects", cwd.replaceAll(path.sep, "-"), `${id}.jsonl`), [
+			{
+				type: "user",
+				uuid: "before-compact",
+				parentUuid: null,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				cwd,
+				message: { content: "Before compaction" },
+			},
+			{
+				type: "user",
+				uuid: "after-compact",
+				parentUuid: null,
+				logicalParentUuid: "before-compact",
+				timestamp: "2026-01-01T00:00:01.000Z",
+				message: { content: "After compaction" },
+			},
+		]);
+		const store = new ClaudeSessionStore(root);
+		const info = (await store.list())[0];
+		if (!info) throw new Error("Compacted fixture was not listed");
+
+		const entries = (await store.load(info)).getEntries();
+
+		expect(entries.filter(entry => entry.parentId === null)).toHaveLength(1);
+		const resumed = entries.find(
+			entry =>
+				entry.type === "message" && entry.message.role === "user" && entry.message.content === "After compaction",
+		);
+		const original = entries.find(
+			entry =>
+				entry.type === "message" && entry.message.role === "user" && entry.message.content === "Before compaction",
+		);
+		expect(resumed?.parentId).toBe(original?.id);
+	});
+
+	it("follows logicalParentUuid over parentUuid when a compact boundary sets both", async () => {
+		const root = path.join(tempRoot, ".claude");
+		const cwd = path.join(tempRoot, "boundary-both-set");
+		const id = "88888888-8888-4888-8888-888888888888";
+		const message = (text: string) => ({ content: text });
+		await writeJsonl(path.join(root, "projects", cwd.replaceAll(path.sep, "-"), `${id}.jsonl`), [
+			{
+				type: "user",
+				uuid: "start",
+				parentUuid: null,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				cwd,
+				message: message("Start"),
+			},
+			{
+				type: "user",
+				uuid: "left",
+				parentUuid: "start",
+				timestamp: "2026-01-01T00:00:01.000Z",
+				message: message("Left"),
+			},
+			{
+				type: "user",
+				uuid: "right",
+				parentUuid: "start",
+				timestamp: "2026-01-01T00:00:02.000Z",
+				message: message("Right"),
+			},
+			{
+				type: "system",
+				subtype: "compact_boundary",
+				uuid: "boundary",
+				parentUuid: "right",
+				logicalParentUuid: "left",
+				timestamp: "2026-01-01T00:00:03.000Z",
+			},
+			{
+				type: "user",
+				uuid: "resumed",
+				parentUuid: "boundary",
+				timestamp: "2026-01-01T00:00:04.000Z",
+				message: message("Resumed"),
+			},
+		]);
+		const store = new ClaudeSessionStore(root);
+		const info = (await store.list())[0];
+		if (!info) throw new Error("Boundary fixture was not listed");
+
+		const entries = (await store.load(info)).getEntries();
+		const userEntry = (text: string) =>
+			entries.find(
+				entry => entry.type === "message" && entry.message.role === "user" && entry.message.content === text,
+			);
+
+		expect(userEntry("Resumed")?.parentId).toBe(userEntry("Left")?.id);
+		expect(userEntry("Resumed")?.parentId).not.toBe(userEntry("Right")?.id);
+	});
+
+	it("links a record written before its parent", async () => {
+		const root = path.join(tempRoot, ".claude");
+		const cwd = path.join(tempRoot, "out-of-order");
+		const id = "77777777-7777-4777-8777-777777777777";
+		await writeJsonl(path.join(root, "projects", cwd.replaceAll(path.sep, "-"), `${id}.jsonl`), [
+			{
+				type: "user",
+				uuid: "child",
+				parentUuid: "parent",
+				timestamp: "2026-01-01T00:00:01.000Z",
+				cwd,
+				message: { content: "Written first" },
+			},
+			{
+				type: "user",
+				uuid: "parent",
+				parentUuid: null,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				message: { content: "Written second" },
+			},
+		]);
+		const store = new ClaudeSessionStore(root);
+		const info = (await store.list())[0];
+		if (!info) throw new Error("Out-of-order fixture was not listed");
+
+		const entries = (await store.load(info)).getEntries();
+
+		expect(entries.filter(entry => entry.parentId === null)).toHaveLength(1);
+		const child = entries.find(
+			entry =>
+				entry.type === "message" && entry.message.role === "user" && entry.message.content === "Written first",
+		);
+		const parent = entries.find(
+			entry =>
+				entry.type === "message" && entry.message.role === "user" && entry.message.content === "Written second",
+		);
+		expect(child?.parentId).toBe(parent?.id);
+	});
+
+	it("grafts a subagent transcript onto the tool call that spawned it", async () => {
+		const root = path.join(tempRoot, ".claude");
+		const cwd = path.join(tempRoot, "with-subagent");
+		const id = "66666666-6666-4666-8666-666666666666";
+		const projectDirectory = path.join(root, "projects", cwd.replaceAll(path.sep, "-"));
+		await writeJsonl(path.join(projectDirectory, `${id}.jsonl`), [
+			{
+				type: "user",
+				uuid: "ask",
+				parentUuid: null,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				cwd,
+				message: { content: "Delegate this" },
+			},
+			{
+				type: "assistant",
+				uuid: "spawn",
+				parentUuid: "ask",
+				timestamp: "2026-01-01T00:00:01.000Z",
+				message: {
+					id: "msg_spawn",
+					model: "claude-sonnet-4-5",
+					content: [{ type: "tool_use", id: "toolu_task", name: "Task", input: { prompt: "Investigate" } }],
+				},
+			},
+			{
+				type: "user",
+				uuid: "wrap-up",
+				parentUuid: "spawn",
+				timestamp: "2026-01-01T00:00:09.000Z",
+				message: { content: "Thanks" },
+			},
+		]);
+		const subagents = path.join(projectDirectory, id, "subagents");
+		await writeJsonl(path.join(subagents, "agent-abc.jsonl"), [
+			{
+				type: "user",
+				uuid: "sub-task",
+				parentUuid: null,
+				isSidechain: true,
+				timestamp: "2026-01-01T00:00:02.000Z",
+				message: { content: "Investigate" },
+			},
+			{
+				type: "assistant",
+				uuid: "sub-answer",
+				parentUuid: "sub-task",
+				isSidechain: true,
+				timestamp: "2026-01-01T00:00:03.000Z",
+				message: {
+					id: "msg_sub",
+					model: "claude-sonnet-4-5",
+					content: [{ type: "text", text: "Subagent finding" }],
+				},
+			},
+		]);
+		await Bun.write(path.join(subagents, "agent-abc.meta.json"), JSON.stringify({ toolUseId: "toolu_task" }));
+		const store = new ClaudeSessionStore(root);
+		const info = (await store.list()).find(session => session.id === id);
+		if (!info) throw new Error("Subagent fixture was not listed");
+
+		const manager = await store.load(info);
+		const entries = manager.getEntries();
+		const byId = new Map(entries.map(entry => [entry.id, entry]));
+
+		const finding = entries.find(
+			entry =>
+				entry.type === "message" &&
+				entry.message.role === "assistant" &&
+				entry.message.content.some(block => block.type === "text" && block.text === "Subagent finding"),
+		);
+		if (!finding) throw new Error("Subagent transcript was dropped");
+		const ancestry: string[] = [];
+		for (let cursor = byId.get(finding.parentId ?? ""); cursor; cursor = byId.get(cursor.parentId ?? "")) {
+			ancestry.push(cursor.id);
+		}
+		const spawningCall = entries.find(
+			entry =>
+				entry.type === "message" &&
+				entry.message.role === "assistant" &&
+				entry.message.content.some(block => block.type === "toolCall" && block.id === "toolu_task"),
+		);
+		if (!spawningCall) throw new Error("Task tool call was not imported");
+		expect(ancestry).toContain(spawningCall.id);
+		expect(entries.filter(entry => entry.parentId === null)).toHaveLength(1);
+
+		const leaf = manager.getLeafEntry();
+		if (leaf?.type !== "message" || leaf.message.role !== "user") throw new Error("Leaf left inside the subagent");
+		expect(leaf.message.content).toBe("Thanks");
+	});
+
 	it("recognizes legacy history keys and .projects storage", async () => {
 		const root = path.join(tempRoot, ".claude");
 		const cwd = path.join(tempRoot, "legacy");

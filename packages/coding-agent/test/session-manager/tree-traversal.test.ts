@@ -257,6 +257,21 @@ describe("SessionManager append and tree traversal", () => {
 			expect(branchIds).toEqual([idA, idB, idC].sort());
 		});
 
+		it("hides an archived branch on a chain too deep to recurse over", async () => {
+			const session = SessionManager.inMemory();
+			const idRoot = session.appendMessage(userMsg("root"));
+			const idAsst = session.appendMessage(assistantMsg("answer"));
+			// Well past the ~27k frames a recursive walk fits on the stack.
+			for (let i = 0; i < 60_000; i++) session.appendMessage(userMsg(`turn ${i}`));
+
+			session.branch(idRoot);
+			const idAbandoned = session.appendMessage(userMsg("abandoned"));
+			session.branch(idAsst);
+			expect(await session.archiveBranch(idAbandoned)).toBe(1);
+
+			expect(session.getTree()[0].children).toHaveLength(1);
+		});
+
 		it("handles deep branching", () => {
 			const session = SessionManager.inMemory();
 

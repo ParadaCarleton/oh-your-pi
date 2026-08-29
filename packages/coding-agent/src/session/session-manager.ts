@@ -2659,16 +2659,17 @@ export class SessionManager {
 		if (options?.includeArchived) return tree;
 		const archived = this.#index.archivedRootIds();
 		if (archived.size === 0) return tree;
-		const prune = (nodes: SessionTreeNode[]): SessionTreeNode[] => {
-			const out: SessionTreeNode[] = [];
-			for (const node of nodes) {
-				if (archived.has(node.entry.id)) continue;
-				node.children = prune(node.children);
-				out.push(node);
-			}
-			return out;
-		};
-		return prune(tree);
+		// Iterative: a session is as deep as it is long, so recursion here blows
+		// the stack on any long conversation.
+		const keep = (nodes: SessionTreeNode[]) => nodes.filter(node => !archived.has(node.entry.id));
+		const roots = keep(tree);
+		const stack = [...roots];
+		while (stack.length > 0) {
+			const node = stack.pop() as SessionTreeNode;
+			node.children = keep(node.children);
+			stack.push(...node.children);
+		}
+		return roots;
 	}
 
 	/** Roots of the subtrees currently hidden by an archive record. */

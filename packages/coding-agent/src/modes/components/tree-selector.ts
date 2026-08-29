@@ -344,10 +344,8 @@ class TreeList implements Component {
 				return [...prioritized, ...rest];
 			})();
 
-			// Real branch points add visual depth, and a virtual root's direct
-			// children (the session roots) nest one level under the shared column-0
-			// root. Linear continuations otherwise stay aligned with their head.
-			const childIndent = multipleChildren || isVirtualRootChild ? indent + 1 : indent;
+			// The trunk keeps its parent's column and draws no connector.
+			const trunkChild = multipleChildren ? orderedChildren.find(child => containsActive.get(child)) : undefined;
 
 			// Build gutters for children
 			// If this node showed a connector, add a gutter entry for descendants
@@ -363,8 +361,13 @@ class TreeList implements Component {
 
 			// Add children in reverse order
 			for (let i = orderedChildren.length - 1; i >= 0; i--) {
+				const child = orderedChildren[i];
 				const childIsLast = i === orderedChildren.length - 1;
-				stack.push([orderedChildren[i], childIndent, multipleChildren, childIsLast, childGutters, false]);
+				// A virtual root's direct children (the session roots) nest one level
+				// under the shared column-0 root even when they do not diverge.
+				const diverges = multipleChildren && child !== trunkChild;
+				const childIndent = diverges || isVirtualRootChild ? indent + 1 : indent;
+				stack.push([child, childIndent, diverges, childIsLast, childGutters, false]);
 			}
 		}
 

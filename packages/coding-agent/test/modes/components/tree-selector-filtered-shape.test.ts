@@ -94,19 +94,20 @@ describe("filtered rows carry the shape of the filtered tree", () => {
 	// depth of branch points that never render.
 	it("places a surviving branch under its nearest visible ancestor", () => {
 		const root = makeNode("user", "root question");
+		const active = chain(chain(root, "assistant", "active reply"), "user", "active leaf");
 		chain(root, "user", "alternate branch");
-		const reply = chain(root, "assistant", "reply");
-		const deeper = chain(reply, "assistant", "deeper reply");
+		const deeper = chain(chain(root, "assistant", "reply"), "assistant", "deeper reply");
 		chain(deeper, "assistant", "abandoned stub");
-		const main = chain(deeper, "user", "main line");
+		chain(deeper, "user", "main line");
 
-		const unfiltered = renderStripped([root], main.entry.id, "default");
+		const unfiltered = renderStripped([root], active.entry.id, "default");
 		expect(connectorColumn(findRow(unfiltered, "main line"))).toBeGreaterThan(
 			connectorColumn(findRow(unfiltered, "alternate branch")),
 		);
 
-		// The filter leaves them the only nodes below the root, so they are siblings.
-		const filtered = renderStripped([root], main.entry.id, "user-only");
+		// The filter leaves them the only diverging nodes below the root, so they
+		// become siblings of each other.
+		const filtered = renderStripped([root], active.entry.id, "user-only");
 		expect(connectorColumn(findRow(filtered, "main line"))).toBe(
 			connectorColumn(findRow(filtered, "alternate branch")),
 		);

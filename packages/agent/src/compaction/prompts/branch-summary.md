@@ -7,7 +7,7 @@ You MUST use EXACT format:
 [What is the user trying to accomplish in this branch?]
 
 ## Constraints & Preferences
-- [Constraints, preferences, requirements mentioned]
+- [Constraints, preferences, requirements this conversation established]
 - [(none) if none mentioned]
 
 ## Progress

@@ -8,13 +8,11 @@ import type { SlashCommandRuntime, TuiSlashCommandRuntime } from "@oh-my-pi/pi-c
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 describe("compaction summary editing (issue #8281)", () => {
-	it("updates the latest compaction summary in memory and in rebuilt context", async () => {
+	it("updates the compaction summary in memory and in rebuilt context", async () => {
 		const manager = SessionManager.inMemory();
 		const id = manager.appendCompaction("original summary", "orig", "entry-1", 100);
 
-		const editedId = await manager.updateLatestCompactionSummary("edited summary");
-
-		expect(editedId).toBe(id);
+		expect(await manager.updateCompactionSummary(id, "edited summary")).toBe(true);
 		expect(getLatestCompactionEntry(manager.getBranch())?.summary).toBe("edited summary");
 		// The live model context is rebuilt from entries, so the edit shows up
 		// in the next turn's context without any extra synchronization.
@@ -23,9 +21,22 @@ describe("compaction summary editing (issue #8281)", () => {
 		expect(serialized).not.toContain("original summary");
 	});
 
-	it("returns null when the session has no compaction entry", async () => {
+	it("reports failure when the branch has no such compaction entry", async () => {
 		const manager = SessionManager.inMemory();
-		expect(await manager.updateLatestCompactionSummary("edited summary")).toBeNull();
+		expect(await manager.updateCompactionSummary("missing", "edited summary")).toBe(false);
+	});
+
+	// The editor blocks while the agent keeps running, so a compaction can land
+	// between opening it and saving. The edit belongs to the entry it was made
+	// against, never to whichever entry happens to be newest on save.
+	it("edits the entry it was given, not the latest one", async () => {
+		const manager = SessionManager.inMemory();
+		const first = manager.appendCompaction("first summary", "first", "entry-1", 100);
+		manager.appendCompaction("second summary", "second", "entry-2", 200);
+
+		expect(await manager.updateCompactionSummary(first, "edited summary")).toBe(true);
+
+		expect(getLatestCompactionEntry(manager.getBranch())?.summary).toBe("second summary");
 	});
 
 	it("rewrites the OpenAI remote-compaction replay summary on edit (#8281 review)", async () => {
@@ -37,11 +48,11 @@ describe("compaction summary editing (issue #8281)", () => {
 				{ type: "message", role: "user", content: [{ type: "input_text", text: "kept" }] },
 			],
 		};
-		manager.appendCompaction("original summary", "orig", "entry-1", 100, {
+		const id = manager.appendCompaction("original summary", "orig", "entry-1", 100, {
 			preserveData: { openaiRemoteCompaction: remote },
 		});
 
-		await manager.updateLatestCompactionSummary("edited summary");
+		await manager.updateCompactionSummary(id, "edited summary");
 
 		const entry = getLatestCompactionEntry(manager.getBranch());
 		const payload = entry?.preserveData?.openaiRemoteCompaction as {
@@ -60,8 +71,8 @@ describe("compaction summary editing (issue #8281)", () => {
 		// Brand-new sessions only write a file once they have an assistant
 		// message; append one so the lazy gate lets entries reach disk.
 		manager.appendMessage({ role: "assistant", content: "hi", timestamp: 1 } as never);
-		manager.appendCompaction("original summary", "orig", "entry-1", 100);
-		await manager.updateLatestCompactionSummary("edited summary");
+		const id = manager.appendCompaction("original summary", "orig", "entry-1", 100);
+		await manager.updateCompactionSummary(id, "edited summary");
 		await manager.flush();
 		const sessionFile = manager.getSessionFile();
 		if (!sessionFile) throw new Error("expected a persisted session file");
@@ -116,6 +127,26 @@ describe("/compact-edit dispatch (issue #8281)", () => {
 		await executeBuiltinSlashCommand("/compact-edit", h.runtime);
 
 		expect(getLatestCompactionEntry(manager.getBranch())?.summary).toBe("original summary");
+		expect(h.showStatus).not.toHaveBeenCalled();
+	});
+
+	// A compaction that lands while the editor is open moves the branch on; the
+	// stale text is dropped rather than written over the summary that replaced it.
+	it("discards the edit when its entry left the branch", async () => {
+		const manager = SessionManager.inMemory();
+		manager.appendCompaction("original summary", "orig", "entry-1", 100);
+		const h = tuiRuntime(manager, "edited summary");
+		h.runtime.ctx.session = { rebuildContextAfterCompactionEdit: vi.fn() } as never;
+		h.showHookEditor.mockImplementation(async () => {
+			manager.resetLeaf();
+			manager.appendCompaction("newer summary", "newer", "entry-2", 200);
+			return "edited summary";
+		});
+
+		await executeBuiltinSlashCommand("/compact-edit", h.runtime);
+
+		expect(getLatestCompactionEntry(manager.getBranch())?.summary).toBe("newer summary");
+		expect(h.showWarning).toHaveBeenCalledWith(expect.stringContaining("discarded"));
 		expect(h.showStatus).not.toHaveBeenCalled();
 	});
 

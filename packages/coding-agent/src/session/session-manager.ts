@@ -35,7 +35,6 @@ import {
 import {
 	type BuildSessionContextOptions,
 	buildSessionContext,
-	getLatestCompactionEntry,
 	getOpenAiRemoteCompactionPayload,
 	type SessionContext,
 } from "./session-context";
@@ -2465,17 +2464,18 @@ export class SessionManager {
 	}
 
 	/**
-	 * Replace the summary of the most recent compaction entry, in memory and on
-	 * disk. Returns the edited entry id, or null when the session has no
-	 * compaction entry yet.
+	 * Replace the summary of one compaction entry, in memory and on disk.
+	 * Returns false when the branch no longer carries that entry.
 	 */
-	async updateLatestCompactionSummary(summary: string): Promise<string | null> {
-		const entry = getLatestCompactionEntry(this.getBranch());
-		if (!entry) return null;
+	async updateCompactionSummary(entryId: string, summary: string): Promise<boolean> {
+		const entry = this.getBranch().find(
+			(candidate): candidate is CompactionEntry => candidate.type === "compaction" && candidate.id === entryId,
+		);
+		if (!entry) return false;
 		entry.summary = summary;
 		updateOpenAiRemoteCompactionSummary(entry, summary);
 		await this.rewriteEntries();
-		return entry.id;
+		return true;
 	}
 
 	/**

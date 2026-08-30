@@ -32,7 +32,12 @@ import {
 	sanitizeRehydratedOpenAIResponsesAssistantMessage,
 	stripInternalDetailsFields,
 } from "./messages";
-import { type BuildSessionContextOptions, buildSessionContext, type SessionContext } from "./session-context";
+import {
+	type BuildSessionContextOptions,
+	buildSessionContext,
+	getOpenAiRemoteCompactionPayload,
+	type SessionContext,
+} from "./session-context";
 import {
 	type ArchiveEntry,
 	type BranchSummaryEntry,
@@ -2473,6 +2478,21 @@ export class SessionManager {
 	}
 
 	/**
+	 * Replace the summary of one compaction entry, in memory and on disk.
+	 * Returns false when the branch no longer carries that entry.
+	 */
+	async updateCompactionSummary(entryId: string, summary: string): Promise<boolean> {
+		const entry = this.getBranch().find(
+			(candidate): candidate is CompactionEntry => candidate.type === "compaction" && candidate.id === entryId,
+		);
+		if (!entry) return false;
+		entry.summary = summary;
+		updateOpenAiRemoteCompactionSummary(entry, summary);
+		await this.rewriteEntries();
+		return true;
+	}
+
+	/**
 	 * Append a custom message entry (for extensions) that participates in LLM context.
 	 * @param customType Hook identifier for filtering on reload
 	 * @param content Message content (string or TextContent/ImageContent array)
@@ -3416,5 +3436,20 @@ export async function cleanupEmptyMoveSession(
 		await sessionManager.dropSession(sessionFile);
 	} catch (err) {
 		logger.warn("Failed to clean up empty move session", { sessionFile, error: String(err) });
+	}
+}
+
+/**
+ * Rewrite the preserved OpenAI remote-compaction summary item to match an
+ * in-place summary edit. Providers replay these items verbatim, so editing only
+ * `entry.summary` would leave the wire input on the original remote summary.
+ */
+function updateOpenAiRemoteCompactionSummary(entry: CompactionEntry, summary: string): void {
+	const payload = getOpenAiRemoteCompactionPayload(entry);
+	if (!payload) return;
+	for (const item of payload.items) {
+		if (item.type === "compaction_summary") {
+			item.summary = summary;
+		}
 	}
 }

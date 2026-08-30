@@ -5205,6 +5205,27 @@ export class AgentSession {
 	}
 
 	/**
+	 * Install a rewritten history on the live agent. Advisor state and todo
+	 * phases are derived from the messages, and any cached provider-side history
+	 * describes the shape that was just replaced.
+	 */
+	#adoptRewrittenHistory(messages: AgentMessage[]): void {
+		this.agent.replaceMessages(messages);
+		this.#advisors.resetSessionState({ preserveCost: true });
+		this.#todo.syncFromBranch();
+		this.#closeCodexProviderSessionsForHistoryRewrite();
+	}
+
+	/**
+	 * Rebuild the live agent context after an in-place compaction-summary edit.
+	 * The running agent still holds the CompactionSummaryMessage built before the
+	 * edit, so without this the next provider request replays the old summary.
+	 */
+	rebuildContextAfterCompactionEdit(): void {
+		this.#adoptRewrittenHistory(this.buildDisplaySessionContext().messages);
+	}
+
+	/**
 	 * Transcript for TUI display. Full history is kept for export/resume-style
 	 * callers; live chat can collapse compacted history to keep the hot render
 	 * surface bounded. Display-only — NEVER feed the result to
@@ -7777,10 +7798,7 @@ export class AgentSession {
 		if (activeMessages) {
 			activeMessages.splice(0, activeMessages.length, ...sessionContext.messages);
 		}
-		this.agent.replaceMessages(activeMessages ?? sessionContext.messages);
-		this.#advisors.resetSessionState({ preserveCost: true });
-		this.#todo.syncFromBranch();
-		this.#closeCodexProviderSessionsForHistoryRewrite();
+		this.#adoptRewrittenHistory(activeMessages ?? sessionContext.messages);
 		this.#checkpointState = undefined;
 		this.#pendingRewindReport = undefined;
 	}

@@ -304,6 +304,12 @@ After summary generation (or hook-provided summary), agent session:
 4. Synchronizes active todo phases from the rebuilt branch and closes provider sessions whose history was rewritten.
 5. Emits `session_compact` hook event.
 
+### Editing a summary
+
+`/compact-edit` opens the latest `CompactionEntry`'s summary in the multi-line editor (Ctrl+G for `$VISUAL`/`$EDITOR`). Saving calls `SessionManager.updateCompactionSummary(entryId, summary)`, which rewrites the entry's `summary` and any `preserveData.openaiRemoteCompaction` replay item, then rewrites the session file so a resume keeps the edited text. `AgentSession.rebuildContextAfterCompactionEdit()` then reinstalls the rebuilt history on the live agent.
+
+The command addresses the entry by id: a compaction can land while the editor is open, and an edit whose entry has left the branch is discarded rather than written over the summary that replaced it. The editor is interactive-only; ACP callers get a notice.
+
 ## Branch summarization pipeline
 
 Branch summarization is tied to tree navigation, not token overflow.

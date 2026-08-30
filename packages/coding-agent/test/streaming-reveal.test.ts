@@ -292,18 +292,29 @@ describe("streaming reveal", () => {
 		vi.advanceTimersByTime(STREAMING_REVEAL_FRAME_MS);
 		expect(textAt(latestMessage(component), 0)).toBe("abc");
 
-		controller.setTarget(
-			makeMessage([
-				{ type: "text", text: "abcdefghi" },
-				{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } },
-			]),
-		);
+		// Production hands the reveal the tool-stripped `beforeTools` segment plus
+		// an explicit `hasToolCalls` flag — the target itself never carries a
+		// toolCall block, so the boundary must be signalled, not re-derived.
+		controller.setTarget(makeMessage([{ type: "text", text: "abcdefghi" }]), true);
 		const updates = component.messages.length;
 		vi.advanceTimersByTime(STREAMING_REVEAL_FRAME_MS * 10);
 
 		expect(textAt(latestMessage(component), 0)).toBe("abcdefghi");
 		expect(component.messages).toHaveLength(updates);
 		expect(requestRender).toHaveBeenCalledTimes(1);
+	});
+
+	it("snaps to full text when a tool call arrives before the first reveal tick", () => {
+		// #10318: when the tool call lands before any 30fps tick runs, #revealed
+		// is still 0. Without force-completing at the boundary the block commits
+		// blank and the entire reply vanishes, not just its tail.
+		vi.useFakeTimers();
+		const { component, controller } = makeController();
+
+		controller.begin(component, makeMessage([{ type: "text", text: "" }]));
+		controller.setTarget(makeMessage([{ type: "text", text: "Let me wait for that result." }]), true);
+
+		expect(textAt(latestMessage(component), 0)).toBe("Let me wait for that result.");
 	});
 
 	it("passes the bound component to requestRender on each smooth tick", () => {
@@ -472,16 +483,10 @@ describe("frame-skip coalescing", () => {
 		controller.setTarget(makeMessage([{ type: "text", text: "yo" }]));
 		const pending = component.messages.length;
 		expect(textAt(latestMessage(component), 0)).toBe("hi");
-		controller.setTarget(
-			makeMessage([
-				{ type: "text", text: "yo" },
-				{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } },
-			]),
-		);
+		controller.setTarget(makeMessage([{ type: "text", text: "yo" }]), true);
 		// The toolCall boundary still renders synchronously, before any tick.
 		expect(component.messages.length).toBe(pending + 1);
 		expect(textAt(latestMessage(component), 0)).toBe("yo");
-		expect(latestMessage(component).content.at(-1)?.type).toBe("toolCall");
 		vi.advanceTimersByTime(STREAMING_REVEAL_FRAME_MS * 4);
 		expect(component.messages.length).toBe(pending + 1);
 	});

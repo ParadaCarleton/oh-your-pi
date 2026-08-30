@@ -12,6 +12,7 @@ Capture exact technical state, not abstractions.
 - Partial work affecting the next step
 Register: address the successor directly in the imperative ("Fix X", "Run Y") — never first person ("I need to…", "my attempt…").
 The handoff mechanism is invisible to the document: NEVER list writing, generating, or delivering a handoff/summary/context document as progress or a next step. Progress and Next Steps cover the user's task only.
+Standing instructions from context files (CLAUDE.md, AGENTS.md) and rule files reach the successor on their own: NEVER restate them. A copy here goes stale the moment the file is edited, and then contradicts it.
 </instruction>
 
 <output>
@@ -21,7 +22,7 @@ Use exactly this structure:
 [What the user is trying to accomplish]
 
 ## Constraints & Preferences
-- [Any constraints, preferences, or requirements mentioned]
+- [Any constraints, preferences, or requirements this conversation established]
 
 ## Progress
 ### Done

@@ -327,6 +327,18 @@ describe("streaming reveal", () => {
 		expect(textAt(latestMessage(component), 0)).toBe("abcdefghi");
 	});
 
+	it("shows the whole reply when a tool call lands before the first reveal tick", () => {
+		// A short line followed straight by a wait/hub call reveals nothing before
+		// the block is finalized, so the entire reply commits blank.
+		vi.useFakeTimers();
+		const { component, controller } = makeController();
+
+		controller.begin(component, makeMessage([{ type: "text", text: "" }]), false);
+		controller.setTarget(makeMessage([{ type: "text", text: "Let me wait for that result." }]), true);
+
+		expect(textAt(latestMessage(component), 0)).toBe("Let me wait for that result.");
+	});
+
 	it("passes the bound component to requestRender on each smooth tick", () => {
 		// The controller must hand its component to `requestRender` so the caller
 		// scopes the render to that subtree via `TUI.requestComponentRender`

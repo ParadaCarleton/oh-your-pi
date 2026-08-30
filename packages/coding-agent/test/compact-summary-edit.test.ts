@@ -37,8 +37,8 @@ describe("compaction summary editing (issue #8281)", () => {
 				{ type: "message", role: "user", content: [{ type: "input_text", text: "kept" }] },
 			],
 		};
-		manager.appendCompaction("original summary", "orig", "entry-1", 100, undefined, undefined, {
-			openaiRemoteCompaction: remote,
+		manager.appendCompaction("original summary", "orig", "entry-1", 100, {
+			preserveData: { openaiRemoteCompaction: remote },
 		});
 
 		await manager.updateLatestCompactionSummary("edited summary");

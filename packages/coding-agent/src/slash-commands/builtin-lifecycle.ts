@@ -219,7 +219,13 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 			}
 			const edited = await runtime.ctx.showHookEditor("Edit compaction summary", entry.summary);
 			if (edited === undefined || edited === entry.summary) return;
-			await runtime.ctx.sessionManager.updateLatestCompactionSummary(edited);
+			// Compaction can land while the editor is open, so write back to the
+			// entry that was edited rather than to whichever is newest now.
+			const written = await runtime.ctx.sessionManager.updateCompactionSummary(entry.id, edited);
+			if (!written) {
+				runtime.ctx.showWarning("That compaction summary is no longer on this branch; the edit was discarded.");
+				return;
+			}
 			// The running agent still holds the pre-edit summary message.
 			runtime.ctx.session.rebuildContextAfterCompactionEdit();
 			runtime.ctx.showStatus("Compaction summary updated.");

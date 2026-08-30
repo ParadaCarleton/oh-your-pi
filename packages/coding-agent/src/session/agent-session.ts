@@ -5139,6 +5139,24 @@ export class AgentSession {
 	}
 
 	/**
+	 * Rebuild the live agent context after an in-place compaction-summary edit.
+	 *
+	 * `updateLatestCompactionSummary` mutates the SessionManager entry, but the
+	 * running agent's `state.messages` still hold the CompactionSummaryMessage
+	 * built before the edit — without this, the next provider request replays
+	 * the original summary. Mirrors the post-compaction/prune rebuild
+	 * (`buildDisplaySessionContext` + `agent.replaceMessages`) and closes any
+	 * cached provider-session history so the edited text actually ships (#8281).
+	 */
+	rebuildContextAfterCompactionEdit(): void {
+		const sessionContext = this.buildDisplaySessionContext();
+		this.agent.replaceMessages(sessionContext.messages);
+		this.#advisors.resetSessionState({ preserveCost: true });
+		this.#todo.syncFromBranch();
+		this.#closeCodexProviderSessionsForHistoryRewrite();
+	}
+
+	/**
 	 * Transcript for TUI display. Full history is kept for export/resume-style
 	 * callers; live chat can collapse compacted history to keep the hot render
 	 * surface bounded. Display-only — NEVER feed the result to

@@ -32,7 +32,12 @@ import {
 	sanitizeRehydratedOpenAIResponsesAssistantMessage,
 	stripInternalDetailsFields,
 } from "./messages";
-import { type BuildSessionContextOptions, buildSessionContext, type SessionContext } from "./session-context";
+import {
+	type BuildSessionContextOptions,
+	buildSessionContext,
+	getLatestCompactionEntry,
+	type SessionContext,
+} from "./session-context";
 import {
 	type BranchSummaryEntry,
 	type CompactionEntry,
@@ -2420,6 +2425,26 @@ export class SessionManager {
 	}
 
 	/**
+	 * Replace the summary of the most recent compaction entry. The live model
+	 * context and the TUI transcript both read summaries from the entry, so
+	 * the edit propagates everywhere, and the session file is rewritten in
+	 * place so a resume keeps the edited text (#8281). Returns the edited
+	 * entry id, or null when the session has no compaction entry yet.
+	 *
+	 * Also rewrites the preserved OpenAI remote-compaction replay payload so a
+	 * provider that replays `replacementHistory` sends the edited text instead
+	 * of the original remote summary (#8281 review).
+	 */
+	async updateLatestCompactionSummary(summary: string): Promise<string | null> {
+		const entry = getLatestCompactionEntry(this.getBranch());
+		if (!entry) return null;
+		entry.summary = summary;
+		updateOpenAiRemoteCompactionSummary(entry, summary);
+		await this.rewriteEntries();
+		return entry.id;
+	}
+
+	/**
 	 * Append a custom message entry (for extensions) that participates in LLM context.
 	 * @param customType Hook identifier for filtering on reload
 	 * @param content Message content (string or TextContent/ImageContent array)
@@ -3083,5 +3108,24 @@ export async function cleanupEmptyMoveSession(
 		await sessionManager.dropSession(sessionFile);
 	} catch (err) {
 		logger.warn("Failed to clean up empty move session", { sessionFile, error: String(err) });
+	}
+}
+
+/**
+ * Rewrite the preserved OpenAI remote-compaction summary item to match an
+ * in-place summary edit. Providers that replay `replacementHistory` (see
+ * `getOpenAiRemoteCompactionPayload`) ship the item verbatim, so editing only
+ * `entry.summary` leaves the wire input on the original remote summary (#8281).
+ */
+function updateOpenAiRemoteCompactionSummary(entry: CompactionEntry, summary: string): void {
+	const remote = entry.preserveData?.openaiRemoteCompaction;
+	if (!remote || typeof remote !== "object") return;
+	const typed = remote as { replacementHistory?: unknown };
+	if (!Array.isArray(typed.replacementHistory)) return;
+	for (const item of typed.replacementHistory) {
+		if (!item || typeof item !== "object") continue;
+		const candidate = item as { type?: unknown; summary?: unknown };
+		if (candidate.type !== "compaction_summary") continue;
+		candidate.summary = summary;
 	}
 }

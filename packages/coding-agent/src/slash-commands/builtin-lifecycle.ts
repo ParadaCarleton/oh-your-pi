@@ -10,6 +10,7 @@ import { memoryStatsUnavailableMessage, resolveMemoryBackend } from "../memory-b
 import type { FreshSessionResult, HandoffResult } from "../session/agent-session";
 import { COMPACT_MODES, parseCompactArgs } from "../session/compact-modes";
 import { USER_INTERRUPT_LABEL } from "../session/messages";
+import { getLatestCompactionEntry } from "../session/session-context";
 import { resolveResumableSession } from "../session/session-listing";
 import { toggleSessionPin } from "../session/session-pins";
 import { formatShakeSummary, type ShakeMode } from "../session/shake-types";
@@ -200,6 +201,33 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 				return;
 			}
 			await runtime.ctx.handleCompactCommand(parsed.instructions, parsed.mode);
+		},
+	},
+	{
+		name: "compact-edit",
+		description: "Edit the current compaction summary in a text editor",
+		acpDescription: "Edit the current compaction summary",
+		handle: async (_command, runtime) => {
+			// The editor is interactive-only; ACP callers get a pointer to the
+			// TUI command instead of a silent no-op.
+			const entry = getLatestCompactionEntry(runtime.sessionManager.getBranch());
+			if (!entry) return usage("No compaction summary to edit yet.", runtime);
+			return usage("Compaction summary editing is interactive-only; run /compact-edit in the TUI.", runtime);
+		},
+		handleTui: async (_command, runtime) => {
+			const entry = getLatestCompactionEntry(runtime.ctx.sessionManager.getBranch());
+			if (!entry) {
+				runtime.ctx.showWarning("No compaction summary to edit yet.");
+				return;
+			}
+			const edited = await runtime.ctx.showHookEditor("Edit compaction summary", entry.summary);
+			if (edited === undefined || edited === entry.summary) return;
+			await runtime.ctx.sessionManager.updateLatestCompactionSummary(edited);
+			// Rebuild the live agent context so the next provider request carries
+			// the edited summary, not the CompactionSummaryMessage built pre-edit
+			// (#8281 review). Non-interactive runtimes may lack the live session.
+			runtime.ctx.session?.rebuildContextAfterCompactionEdit();
+			runtime.ctx.showStatus("Compaction summary updated.");
 		},
 	},
 	{

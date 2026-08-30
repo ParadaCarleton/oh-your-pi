@@ -10,6 +10,7 @@ import { memoryStatsUnavailableMessage, resolveMemoryBackend } from "../memory-b
 import type { FreshSessionResult, HandoffResult } from "../session/agent-session";
 import { COMPACT_MODES, parseCompactArgs } from "../session/compact-modes";
 import { USER_INTERRUPT_LABEL } from "../session/messages";
+import { getLatestCompactionEntry } from "../session/session-context";
 import { resolveResumableSession } from "../session/session-listing";
 import { toggleSessionPin } from "../session/session-pins";
 import { formatShakeSummary, type ShakeMode } from "../session/shake-types";
@@ -201,6 +202,34 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 				return;
 			}
 			await runtime.ctx.handleCompactCommand(parsed.instructions, parsed.mode);
+		},
+	},
+	{
+		name: "compact-edit",
+		description: "Edit the current compaction summary in a text editor",
+		acpDescription: "Edit the current compaction summary",
+		// The editor is interactive-only; ACP callers get a pointer to the TUI
+		// command instead of a silent no-op.
+		handle: async (_command, runtime) =>
+			usage("Compaction summary editing is interactive-only; run /compact-edit in the TUI.", runtime),
+		handleTui: async (_command, runtime) => {
+			const entry = getLatestCompactionEntry(runtime.ctx.sessionManager.getBranch());
+			if (!entry) {
+				runtime.ctx.showWarning("No compaction summary to edit yet.");
+				return;
+			}
+			const edited = await runtime.ctx.showHookEditor("Edit compaction summary", entry.summary);
+			if (edited === undefined || edited === entry.summary) return;
+			// Compaction can land while the editor is open, so write back to the
+			// entry that was edited rather than to whichever is newest now.
+			const written = await runtime.ctx.sessionManager.updateCompactionSummary(entry.id, edited);
+			if (!written) {
+				runtime.ctx.showWarning("That compaction summary is no longer on this branch; the edit was discarded.");
+				return;
+			}
+			// The running agent still holds the pre-edit summary message.
+			runtime.ctx.session.rebuildContextAfterCompactionEdit();
+			runtime.ctx.showStatus("Compaction summary updated.");
 		},
 	},
 	{

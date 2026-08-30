@@ -207,13 +207,10 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 		name: "compact-edit",
 		description: "Edit the current compaction summary in a text editor",
 		acpDescription: "Edit the current compaction summary",
-		handle: async (_command, runtime) => {
-			// The editor is interactive-only; ACP callers get a pointer to the
-			// TUI command instead of a silent no-op.
-			const entry = getLatestCompactionEntry(runtime.sessionManager.getBranch());
-			if (!entry) return usage("No compaction summary to edit yet.", runtime);
-			return usage("Compaction summary editing is interactive-only; run /compact-edit in the TUI.", runtime);
-		},
+		// The editor is interactive-only; ACP callers get a pointer to the TUI
+		// command instead of a silent no-op.
+		handle: async (_command, runtime) =>
+			usage("Compaction summary editing is interactive-only; run /compact-edit in the TUI.", runtime),
 		handleTui: async (_command, runtime) => {
 			const entry = getLatestCompactionEntry(runtime.ctx.sessionManager.getBranch());
 			if (!entry) {
@@ -223,10 +220,8 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 			const edited = await runtime.ctx.showHookEditor("Edit compaction summary", entry.summary);
 			if (edited === undefined || edited === entry.summary) return;
 			await runtime.ctx.sessionManager.updateLatestCompactionSummary(edited);
-			// Rebuild the live agent context so the next provider request carries
-			// the edited summary, not the CompactionSummaryMessage built pre-edit
-			// (#8281 review). Non-interactive runtimes may lack the live session.
-			runtime.ctx.session?.rebuildContextAfterCompactionEdit();
+			// The running agent still holds the pre-edit summary message.
+			runtime.ctx.session.rebuildContextAfterCompactionEdit();
 			runtime.ctx.showStatus("Compaction summary updated.");
 		},
 	},

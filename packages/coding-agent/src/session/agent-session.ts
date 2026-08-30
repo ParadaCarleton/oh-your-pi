@@ -5179,21 +5179,24 @@ export class AgentSession {
 	}
 
 	/**
-	 * Rebuild the live agent context after an in-place compaction-summary edit.
-	 *
-	 * `updateLatestCompactionSummary` mutates the SessionManager entry, but the
-	 * running agent's `state.messages` still hold the CompactionSummaryMessage
-	 * built before the edit — without this, the next provider request replays
-	 * the original summary. Mirrors the post-compaction/prune rebuild
-	 * (`buildDisplaySessionContext` + `agent.replaceMessages`) and closes any
-	 * cached provider-session history so the edited text actually ships (#8281).
+	 * Install a rewritten history on the live agent. Advisor state and todo
+	 * phases are derived from the messages, and any cached provider-side history
+	 * describes the shape that was just replaced.
 	 */
-	rebuildContextAfterCompactionEdit(): void {
-		const sessionContext = this.buildDisplaySessionContext();
-		this.agent.replaceMessages(sessionContext.messages);
+	#adoptRewrittenHistory(messages: AgentMessage[]): void {
+		this.agent.replaceMessages(messages);
 		this.#advisors.resetSessionState({ preserveCost: true });
 		this.#todo.syncFromBranch();
 		this.#closeCodexProviderSessionsForHistoryRewrite();
+	}
+
+	/**
+	 * Rebuild the live agent context after an in-place compaction-summary edit.
+	 * The running agent still holds the CompactionSummaryMessage built before the
+	 * edit, so without this the next provider request replays the old summary.
+	 */
+	rebuildContextAfterCompactionEdit(): void {
+		this.#adoptRewrittenHistory(this.buildDisplaySessionContext().messages);
 	}
 
 	/**
@@ -7769,10 +7772,7 @@ export class AgentSession {
 		if (activeMessages) {
 			activeMessages.splice(0, activeMessages.length, ...sessionContext.messages);
 		}
-		this.agent.replaceMessages(activeMessages ?? sessionContext.messages);
-		this.#advisors.resetSessionState({ preserveCost: true });
-		this.#todo.syncFromBranch();
-		this.#closeCodexProviderSessionsForHistoryRewrite();
+		this.#adoptRewrittenHistory(activeMessages ?? sessionContext.messages);
 		this.#checkpointState = undefined;
 		this.#pendingRewindReport = undefined;
 	}

@@ -36,6 +36,7 @@ import {
 	type BuildSessionContextOptions,
 	buildSessionContext,
 	getLatestCompactionEntry,
+	getOpenAiRemoteCompactionPayload,
 	type SessionContext,
 } from "./session-context";
 import {
@@ -2425,15 +2426,9 @@ export class SessionManager {
 	}
 
 	/**
-	 * Replace the summary of the most recent compaction entry. The live model
-	 * context and the TUI transcript both read summaries from the entry, so
-	 * the edit propagates everywhere, and the session file is rewritten in
-	 * place so a resume keeps the edited text (#8281). Returns the edited
-	 * entry id, or null when the session has no compaction entry yet.
-	 *
-	 * Also rewrites the preserved OpenAI remote-compaction replay payload so a
-	 * provider that replays `replacementHistory` sends the edited text instead
-	 * of the original remote summary (#8281 review).
+	 * Replace the summary of the most recent compaction entry, in memory and on
+	 * disk. Returns the edited entry id, or null when the session has no
+	 * compaction entry yet.
 	 */
 	async updateLatestCompactionSummary(summary: string): Promise<string | null> {
 		const entry = getLatestCompactionEntry(this.getBranch());
@@ -3113,19 +3108,15 @@ export async function cleanupEmptyMoveSession(
 
 /**
  * Rewrite the preserved OpenAI remote-compaction summary item to match an
- * in-place summary edit. Providers that replay `replacementHistory` (see
- * `getOpenAiRemoteCompactionPayload`) ship the item verbatim, so editing only
- * `entry.summary` leaves the wire input on the original remote summary (#8281).
+ * in-place summary edit. Providers replay these items verbatim, so editing only
+ * `entry.summary` would leave the wire input on the original remote summary.
  */
 function updateOpenAiRemoteCompactionSummary(entry: CompactionEntry, summary: string): void {
-	const remote = entry.preserveData?.openaiRemoteCompaction;
-	if (!remote || typeof remote !== "object") return;
-	const typed = remote as { replacementHistory?: unknown };
-	if (!Array.isArray(typed.replacementHistory)) return;
-	for (const item of typed.replacementHistory) {
-		if (!item || typeof item !== "object") continue;
-		const candidate = item as { type?: unknown; summary?: unknown };
-		if (candidate.type !== "compaction_summary") continue;
-		candidate.summary = summary;
+	const payload = getOpenAiRemoteCompactionPayload(entry);
+	if (!payload) return;
+	for (const item of payload.items) {
+		if (item.type === "compaction_summary") {
+			item.summary = summary;
+		}
 	}
 }

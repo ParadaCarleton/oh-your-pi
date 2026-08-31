@@ -28,6 +28,7 @@ import { getSymbolTheme, theme } from "../../modes/theme/theme";
 import type { InteractiveModeContext, TodoPhase } from "../../modes/types";
 import idleRecapPrompt from "../../prompts/system/recap-user.md" with { type: "text" };
 import type { AgentSessionEvent } from "../../session/agent-session";
+import { formatShakeSummary, type ShakeResult } from "../../session/shake-types";
 import {
 	isSilentAbort,
 	isUserInvokedSkillPrompt,
@@ -2285,20 +2286,40 @@ export class EventController {
 
 		const threshold = idleSettings.idleThresholdTokens;
 		if (threshold <= 0) return;
-		if (this.#currentContextTokens() < threshold) return;
 
 		const timeoutMs = this.#idleCompactionDelayMs();
 		this.#idleCompactionTimer = setTimeout(() => {
 			this.#idleCompactionTimer = undefined;
-			// Re-check conditions before firing. Pruning may have run between arming
-			// the timer and now, dropping usage back below the idle threshold.
+			// Re-check conditions before firing; the session may have moved on.
 			if (this.ctx.viewSession.isStreaming) return;
 			if (this.ctx.viewSession.isCompacting) return;
 			if (this.ctx.editor.getText().trim()) return;
-			if (this.#currentContextTokens() < threshold) return;
+			// Below the threshold a summary costs more than it reclaims, so shake
+			// the context down mechanically instead.
+			if (this.#currentContextTokens() < threshold) {
+				void this.#runIdleShake();
+				return;
+			}
 			void this.ctx.viewSession.runIdleCompaction();
 		}, timeoutMs);
 		this.#idleCompactionTimer.unref?.();
+	}
+
+	/** Run the idle shake and fold its rewrite into the transcript. */
+	async #runIdleShake(): Promise<void> {
+		let result: ShakeResult | undefined;
+		try {
+			result = await this.ctx.viewSession.runIdleShake();
+		} catch (error) {
+			logger.debug("Idle shake failed", { error: String(error) });
+			return;
+		}
+		if (!result) return;
+		if (result.toolResultsDropped + result.blocksDropped === 0) return;
+		this.ctx.rebuildChatFromMessages();
+		this.ctx.statusLine.invalidate();
+		this.ctx.ui.requestRender();
+		this.ctx.showStatus(formatShakeSummary(result));
 	}
 
 	#scheduleIdleRecap(): void {

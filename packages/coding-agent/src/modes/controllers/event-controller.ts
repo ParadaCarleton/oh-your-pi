@@ -2260,17 +2260,15 @@ export class EventController {
 	}
 
 	/**
-	 * How long to stay idle before compacting. A negative setting derives the
-	 * delay from the prompt cache: the summary request replays the conversation,
-	 * so it is sent just before the entry goes cold and still reads from it.
+	 * How long to stay idle before compacting. The summary request replays the
+	 * conversation, so it is sent just before the prompt-cache entry goes cold
+	 * and still reads from it.
 	 */
-	#idleCompactionDelayMs(idleTimeoutSeconds: number): number {
-		const clamp = (ms: number): number =>
-			Math.max(IDLE_COMPACTION_MIN_SECONDS * 1000, Math.min(IDLE_COMPACTION_MAX_SECONDS * 1000, ms));
-		if (idleTimeoutSeconds >= 0) return clamp(idleTimeoutSeconds * 1000);
+	#idleCompactionDelayMs(): number {
 		const coldAtMs = getPromptCacheColdAtMs(this.ctx.viewSession.agent.providerSessionState);
 		if (coldAtMs === undefined) return IDLE_COMPACTION_FALLBACK_MS;
-		return clamp(coldAtMs - IDLE_COMPACTION_CACHE_LEAD_MS - Date.now());
+		const leadMs = coldAtMs - IDLE_COMPACTION_CACHE_LEAD_MS - Date.now();
+		return Math.max(IDLE_COMPACTION_MIN_SECONDS * 1000, Math.min(IDLE_COMPACTION_MAX_SECONDS * 1000, leadMs));
 	}
 
 	#scheduleIdleCompaction(): void {
@@ -2289,7 +2287,7 @@ export class EventController {
 		if (threshold <= 0) return;
 		if (this.#currentContextTokens() < threshold) return;
 
-		const timeoutMs = this.#idleCompactionDelayMs(idleSettings.idleTimeoutSeconds);
+		const timeoutMs = this.#idleCompactionDelayMs();
 		this.#idleCompactionTimer = setTimeout(() => {
 			this.#idleCompactionTimer = undefined;
 			// Re-check conditions before firing. Pruning may have run between arming

@@ -1519,6 +1519,9 @@
 ### Removed
 
 - Removed the dangling `MCPManager.setOnNotification` single-slot setter, which had no callers in the runtime. Replaced by `MCPManager.addNotificationListener` — multi-listener, per-listener error isolation, returns an unsubscribe function.
+### Changed
+
+- Extended sleep prevention to Linux and Windows and keep it active while session-owned background jobs or child subagents run.
 
 ## [17.1.8] - 2026-07-28
 

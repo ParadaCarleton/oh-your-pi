@@ -149,12 +149,12 @@ describe("config CLI schema coverage", () => {
 		});
 		await runConfigCommand({
 			action: "set",
-			key: "compaction.idleTimeoutSeconds",
-			value: "600",
+			key: "providers.cacheKeepWarmMinutes",
+			value: "40",
 			flags: { json: true },
 		});
 		await runConfigCommand({ action: "get", key: "compaction.idleThresholdTokens", flags: { json: true } });
-		await runConfigCommand({ action: "get", key: "compaction.idleTimeoutSeconds", flags: { json: true } });
+		await runConfigCommand({ action: "get", key: "providers.cacheKeepWarmMinutes", flags: { json: true } });
 
 		const thresholdPayload = logSpy.mock.calls.at(-2)?.[0];
 		const timeoutPayload = logSpy.mock.calls.at(-1)?.[0];
@@ -166,9 +166,9 @@ describe("config CLI schema coverage", () => {
 			value: 300000,
 		});
 		expect(JSON.parse(String(timeoutPayload))).toMatchObject({
-			key: "compaction.idleTimeoutSeconds",
+			key: "providers.cacheKeepWarmMinutes",
 			type: "number",
-			value: 600,
+			value: 40,
 		});
 	});
 

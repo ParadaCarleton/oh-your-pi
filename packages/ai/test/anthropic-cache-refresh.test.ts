@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
-import { streamSimple } from "@oh-my-pi/pi-ai";
+import { getPromptCacheColdAtMs, streamSimple } from "@oh-my-pi/pi-ai";
 import type { CacheControlEphemeral, MessageCreateParams } from "@oh-my-pi/pi-ai/providers/anthropic-wire";
 import type { CacheRetention, Context, FetchImpl, Model, ProviderSessionState } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
@@ -233,6 +233,36 @@ describe("Anthropic prompt-cache refresh", () => {
 			expect(refresh.max_tokens).toBe(0);
 			expect(refresh.stream).toBe(false);
 		}
+	});
+
+	it("projects a cold time that holds steady as the refresh budget is spent", async () => {
+		vi.useFakeTimers();
+		const capture: FetchCapture = { bodies: [], thinkingRefreshAborted: false };
+		const fetch = createFetch(["ordinary-write", "refresh-read", "refresh-read", "refresh-read"], capture);
+		const states = createProviderSessionState();
+
+		await finishRequest(fetch, states);
+		// Full TTL plus every budgeted refresh: 5m + 3 x 4m45s.
+		const projected = getPromptCacheColdAtMs(states);
+		expect(projected).toBe(Date.now() + 5 * 60_000 + 3 * CACHE_REFRESH_DELAY_MS);
+
+		// Each refresh consumes budget it was already counted for, so the
+		// projection must not drift — including after the last one, which stops
+		// the scheduler rather than rearming it.
+		for (let requestCount = 2; requestCount <= 4; requestCount++) {
+			await advanceToRefresh(capture, requestCount);
+			expect(getPromptCacheColdAtMs(states)).toBe(projected);
+		}
+	});
+
+	it("reports no cold time when keep-alive never armed", async () => {
+		vi.useFakeTimers();
+		const capture: FetchCapture = { bodies: [], thinkingRefreshAborted: false };
+		const fetch = createFetch(["ordinary-write"], capture);
+		const states = createProviderSessionState();
+
+		await finishRequest(fetch, states, { anthropicCacheRefresh: false });
+		expect(getPromptCacheColdAtMs(states)).toBeUndefined();
 	});
 
 	it("resets the idle gap when another normal request starts", async () => {

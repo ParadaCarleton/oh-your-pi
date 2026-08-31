@@ -81,7 +81,7 @@ import { resetOpenAICodexHistoryAfterCompaction } from "@oh-my-pi/pi-ai/provider
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { preferredDialect } from "@oh-my-pi/pi-catalog/identity";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
-import { MacOSPowerAssertion } from "@oh-my-pi/pi-natives";
+import { PowerAssertion } from "@oh-my-pi/pi-natives";
 import {
 	$env,
 	escapeXmlText,
@@ -113,6 +113,7 @@ import {
 	onCodeModeChanged,
 	onExtendedContextChanged,
 	onModelRolesChanged,
+	onPowerSleepPreventionChanged,
 } from "../config/settings";
 import { RawSseDebugBuffer } from "../debug/raw-sse-buffer";
 import { getFileSnapshotStore } from "../edit/file-snapshot-store";
@@ -178,6 +179,7 @@ import planModeToolDecisionReminderPrompt from "../prompts/system/plan-mode-tool
 import rewindReportTemplate from "../prompts/system/rewind-report.md" with { type: "text" };
 import sideChannelNoToolsReminder from "../prompts/system/side-channel-no-tools.md" with { type: "text" };
 import vibeModeActivePrompt from "../prompts/system/vibe-mode-active.md" with { type: "text" };
+import { AgentRegistry } from "../registry/agent-registry";
 import {
 	deobfuscateAssistantContent,
 	deobfuscateSessionContext,
@@ -514,7 +516,9 @@ export class AgentSession {
 		return this.#extensionRoots();
 	}
 
-	#powerAssertion: MacOSPowerAssertion | undefined;
+	#powerAssertion: PowerAssertion | undefined;
+	#unsubscribePowerAssertionActivity: (() => void) | undefined;
+	#unsubscribePowerSleepPrevention: (() => void) | undefined;
 
 	readonly configWarnings: string[] = [];
 
@@ -606,6 +610,7 @@ export class AgentSession {
 	 * undefined to avoid reading the primary's jobs.
 	 */
 	readonly #asyncJobManager: AsyncJobManager | undefined;
+	readonly #agentRegistry: AgentRegistry;
 	/** Clears this session's owner delivery sink registration; set when a manager + agent id exist. */
 	#unregisterAsyncDeliverySink: (() => void) | undefined;
 	/**
@@ -740,13 +745,12 @@ export class AgentSession {
 	}
 
 	#acquirePowerAssertion(): void {
-		if (process.platform !== "darwin") return;
 		if (isBunTestRuntime()) return;
 		if (this.#powerAssertion) return;
 		const mode = this.settings.get("power.sleepPrevention");
 		if (mode === "off") return;
 		try {
-			this.#powerAssertion = MacOSPowerAssertion.start({
+			this.#powerAssertion = PowerAssertion.start({
 				reason: "Oh My Pi agent session",
 				idle: true,
 				display: mode === "display" || mode === "system",
@@ -754,7 +758,7 @@ export class AgentSession {
 				user: mode === "system",
 			});
 		} catch (error) {
-			logger.warn("Failed to acquire macOS power assertion", { error: String(error) });
+			logger.warn("Failed to acquire power assertion", { error: String(error) });
 		}
 	}
 
@@ -765,23 +769,44 @@ export class AgentSession {
 		try {
 			assertion.stop();
 		} catch (error) {
-			logger.warn("Failed to release macOS power assertion", { error: String(error) });
+			logger.warn("Failed to release power assertion", { error: String(error) });
 		}
+	}
+
+	#shouldHoldPowerAssertion(): boolean {
+		if (this.#promptInFlightCount > 0) return true;
+		// Async advisor reviews run on their own runtime after the primary turn
+		// returns (the default syncBacklog:"off" queues them), so they are
+		// invisible to the in-flight/subagent signals. Count an in-flight review
+		// as active work so a long review stays protected from sleep.
+		if (this.#advisors.hasUnsettledReviews()) return true;
+		const agentId = this.#agentId;
+		if (!agentId) return false;
+		if (this.#asyncJobManager?.getUnsettledJobs({ ownerId: agentId }).some(job => !job.queued)) return true;
+		return this.#agentRegistry
+			.list()
+			.some(ref => ref.kind === "sub" && ref.status === "running" && ref.parentId === agentId);
+	}
+
+	#syncPowerAssertion(): void {
+		if (this.#shouldHoldPowerAssertion()) {
+			this.#acquirePowerAssertion();
+			return;
+		}
+		this.#releasePowerAssertion();
 	}
 
 	#beginInFlight(): void {
 		this.#promptInFlightCount++;
-		if (this.#promptInFlightCount === 1) {
-			this.#acquirePowerAssertion();
-		}
+		this.#syncPowerAssertion();
 	}
 
 	#endInFlight(onSettled?: () => void | Promise<void>): void {
 		if (onSettled) this.#inFlightSettledCallbacks.push(onSettled);
 		this.#promptInFlightCount = Math.max(0, this.#promptInFlightCount - 1);
+		this.#syncPowerAssertion();
 		if (this.#promptInFlightCount !== 0) return;
 		this.yieldQueue.requestIdleFlush();
-		this.#releasePowerAssertion();
 		this.#flushPendingAgentEnd();
 		if (this.#inFlightSettledCallbacks.length === 0) {
 			this.#drainStrandedQueuedMessages();
@@ -973,7 +998,7 @@ export class AgentSession {
 	#resetInFlight(): void {
 		this.#promptInFlightCount = 0;
 		this.yieldQueue.requestIdleFlush();
-		this.#releasePowerAssertion();
+		this.#syncPowerAssertion();
 		this.#flushPendingAgentEnd();
 		if (this.#inFlightSettledCallbacks.length === 0) {
 			this.#drainStrandedQueuedMessages();
@@ -1144,6 +1169,7 @@ export class AgentSession {
 		this.#todo = new TodoTracker(todoHost);
 		this.#ownedAsyncJobManager = config.ownedAsyncJobManager;
 		this.#asyncJobManager = config.asyncJobManager ?? config.ownedAsyncJobManager;
+		this.#agentRegistry = config.agentRegistry ?? AgentRegistry.global();
 		const modelControlsHost: ModelControlsHost = {
 			agent: this.agent,
 			settings: this.settings,
@@ -1619,6 +1645,15 @@ export class AgentSession {
 			streamFn: config.advisorStreamFn,
 			transformProviderContext: config.transformProviderContext,
 		});
+		const unsubscribeAsyncJobs = this.#asyncJobManager?.onChange(() => this.#syncPowerAssertion());
+		const unsubscribeSubagents = this.#agentRegistry.onChange(() => this.#syncPowerAssertion());
+		const unsubscribeAdvisorActivity = this.#advisors.onChange(() => this.#syncPowerAssertion());
+		this.#unsubscribePowerAssertionActivity = () => {
+			unsubscribeAsyncJobs?.();
+			unsubscribeSubagents();
+			unsubscribeAdvisorActivity();
+		};
+		this.#syncPowerAssertion();
 
 		const maintenanceHost: SessionMaintenanceHost = {
 			agent: this.agent,
@@ -1734,6 +1769,13 @@ export class AgentSession {
 		// retry.fallbackChains warnings (#10048) once discovery settles.
 		void this.#retryInactiveAdvisorAfterModelDiscovery();
 		void this.#revalidateFallbackChainsAfterModelDiscovery();
+
+		this.#unsubscribePowerSleepPrevention = onPowerSleepPreventionChanged(() => {
+			// #acquirePowerAssertion no-ops while a handle exists, so a mode change
+			// releases first and lets #syncPowerAssertion reacquire at the new mode.
+			this.#releasePowerAssertion();
+			this.#syncPowerAssertion();
+		});
 	}
 	/** Model registry for API key resolution and model discovery */
 	get modelRegistry(): ModelRegistry {
@@ -4352,6 +4394,16 @@ export class AgentSession {
 			}
 		}
 
+		// Unsubscribe the process-global sleep-prevention setting callback BEFORE
+		// releasing the handle: between the release below and the old unsubscribe
+		// site are `await` points (cleanupEmptyMoveSession, sessionManager.close)
+		// where another session's setting change could fire #syncPowerAssertion on
+		// this disposing session — reacquiring the handle with no later release,
+		// leaking sleep inhibition beyond disposal.
+		this.#unsubscribePowerSleepPrevention?.();
+		this.#unsubscribePowerSleepPrevention = undefined;
+		this.#unsubscribePowerAssertionActivity?.();
+		this.#unsubscribePowerAssertionActivity = undefined;
 		this.#releasePowerAssertion();
 		await cleanupEmptyMoveSession(this.sessionManager, this.#movedFromEmptySessionFile);
 		this.#movedFromEmptySessionFile = undefined;

@@ -5694,12 +5694,12 @@ export const SETTINGS_SCHEMA = {
 			group: "Protocol",
 			label: "Keep Prompt Cache Warm",
 			description:
-				"How long to hold Anthropic's 5m cache entry open while idle; each keep-alive refresh bills a cache read",
+				"How long to hold the prompt cache open while idle; keep-alive refreshes bill a cache read each, and past ~43 minutes Auto retention switches to a 1h entry instead",
 			options: [
 				{ value: "5", label: "Off", description: "No keep-alive refreshes — the entry expires on its own 5m TTL" },
 				{ value: "20", label: "20 minutes", description: "Three keep-alive refreshes" },
-				{ value: "40", label: "40 minutes", description: "Seven keep-alive refreshes" },
-				{ value: "60", label: "1 hour", description: "Eleven keep-alive refreshes; consider Long retention instead" },
+				{ value: "40", label: "40 minutes", description: "Seven keep-alive refreshes — the last window a 5m entry wins" },
+				{ value: "60", label: "1 hour", description: "Buys a 1h cache entry; cheaper here than refreshing eleven times" },
 			],
 		},
 	},

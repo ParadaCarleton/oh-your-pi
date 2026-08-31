@@ -11,7 +11,7 @@
  * and OpenRouter response-cache hits across advisor calls.
  */
 import type { StreamFn } from "@oh-my-pi/pi-agent-core";
-import { type SimpleStreamOptions, streamSimple } from "@oh-my-pi/pi-ai";
+import { type CacheRetention, planPromptCacheWindow, type SimpleStreamOptions, streamSimple } from "@oh-my-pi/pi-ai";
 import { classifyModel } from "@oh-my-pi/pi-catalog/identity";
 import { type Settings, validateProviderMaxInFlightRequests } from "../config/settings";
 
@@ -46,7 +46,15 @@ export function createSettingsAwareStreamFn(settings: Settings, base: StreamFn =
 		// explicit per-request retention (long restores 1h Anthropic TTLs and
 		// implicitly disables the short-entry keep-alive refresh loop).
 		const cacheRetentionSetting = settings.get("providers.cacheRetention");
-		const cacheRetention = cacheRetentionSetting === "auto" ? undefined : cacheRetentionSetting;
+		const cacheKeepWarmMs = settings.get("providers.cacheKeepWarmMinutes") * 60_000;
+		let cacheRetention: CacheRetention | undefined;
+		if (cacheRetentionSetting !== "auto") {
+			cacheRetention = cacheRetentionSetting;
+		} else if (planPromptCacheWindow(model, cacheKeepWarmMs).retention === "long") {
+			// Holding the window open this long costs more in stacked keep-alive
+			// reads than a single 1h write.
+			cacheRetention = "long";
+		}
 		const streamFirstEventTimeoutMs = timeoutSecondsToMs(settings.get("providers.streamFirstEventTimeoutSeconds"));
 		const streamIdleTimeoutMs = timeoutSecondsToMs(settings.get("providers.streamIdleTimeoutSeconds"));
 		// Server-side fallback (opt-in): when the user enables it AND the

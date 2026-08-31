@@ -1,4 +1,4 @@
-import type { AssistantMessage, ImageContent } from "@oh-my-pi/pi-ai";
+import { type AssistantMessage, getPromptCacheColdAtMs, type ImageContent } from "@oh-my-pi/pi-ai";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { getStreamingPartialJson } from "@oh-my-pi/pi-ai/utils/block-symbols";
 import { type Component, Loader, TERMINAL } from "@oh-my-pi/pi-tui";
@@ -68,6 +68,12 @@ const IRC_MESSAGE_VISIBLE_TTL_MS = 10_000;
 const MAX_LIVE_IRC_CARDS = 4;
 const IDLE_RECAP_MIN_SECONDS = 1;
 const IDLE_RECAP_MAX_SECONDS = 3600;
+const IDLE_COMPACTION_MIN_SECONDS = 60;
+const IDLE_COMPACTION_MAX_SECONDS = 3600;
+/** Head start for the summary request, so it is sent while the entry is still warm. */
+const IDLE_COMPACTION_CACHE_LEAD_MS = 30_000;
+/** Delay used when no prompt-cache entry is being kept warm to time against. */
+const IDLE_COMPACTION_FALLBACK_MS = 300_000;
 
 const RAW_PARTIAL_JSON_RENDERERS: Record<string, true> = { bash: true, edit: true, apply_patch: true };
 
@@ -2253,6 +2259,20 @@ export class EventController {
 		}
 	}
 
+	/**
+	 * How long to stay idle before compacting. A negative setting derives the
+	 * delay from the prompt cache: the summary request replays the conversation,
+	 * so it is sent just before the entry goes cold and still reads from it.
+	 */
+	#idleCompactionDelayMs(idleTimeoutSeconds: number): number {
+		const clamp = (ms: number): number =>
+			Math.max(IDLE_COMPACTION_MIN_SECONDS * 1000, Math.min(IDLE_COMPACTION_MAX_SECONDS * 1000, ms));
+		if (idleTimeoutSeconds >= 0) return clamp(idleTimeoutSeconds * 1000);
+		const coldAtMs = getPromptCacheColdAtMs(this.ctx.viewSession.agent.providerSessionState);
+		if (coldAtMs === undefined) return IDLE_COMPACTION_FALLBACK_MS;
+		return clamp(coldAtMs - IDLE_COMPACTION_CACHE_LEAD_MS - Date.now());
+	}
+
 	#scheduleIdleCompaction(): void {
 		this.#cancelIdleCompaction();
 		// Don't schedule idle work while context maintenance is already running; the
@@ -2269,7 +2289,7 @@ export class EventController {
 		if (threshold <= 0) return;
 		if (this.#currentContextTokens() < threshold) return;
 
-		const timeoutMs = Math.max(60, Math.min(3600, idleSettings.idleTimeoutSeconds)) * 1000;
+		const timeoutMs = this.#idleCompactionDelayMs(idleSettings.idleTimeoutSeconds);
 		this.#idleCompactionTimer = setTimeout(() => {
 			this.#idleCompactionTimer = undefined;
 			// Re-check conditions before firing. Pruning may have run between arming

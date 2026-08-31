@@ -1171,6 +1171,16 @@ export class SessionMaintenance {
 	}
 
 	/**
+	 * Idle shake: reclaim tokens mechanically for a context too small for a
+	 * summary to pay for itself. Uses the conservative auto-shake preset, so a
+	 * trivial saving leaves history alone instead of rewriting it.
+	 */
+	async runIdleShake(): Promise<ShakeResult | undefined> {
+		if (this.#host.isStreaming() || this.isCompacting) return undefined;
+		return await this.shake("elide", { config: DEFAULT_SHAKE_CONFIG });
+	}
+
+	/**
 	 * Manual handoff: generate a handoff document and commit it as a compaction
 	 * entry on the current session — the document becomes the summary and recent
 	 * history is kept per `compaction.keepRecentTokens`. Unlike `/compact`, the

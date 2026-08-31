@@ -5162,6 +5162,11 @@ export class AgentSession {
 		await this.#maintenance.runIdleCompaction();
 	}
 
+	/** Reclaim tokens mechanically while idle, for contexts below the compaction threshold. */
+	async runIdleShake(): Promise<ShakeResult | undefined> {
+		return await this.#maintenance.runIdleShake();
+	}
+
 	/** Toggle automatic compaction. */
 	setAutoCompactionEnabled(enabled: boolean): void {
 		this.#maintenance.setAutoCompactionEnabled(enabled);

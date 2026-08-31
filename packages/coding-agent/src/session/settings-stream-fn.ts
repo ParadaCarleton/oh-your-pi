@@ -72,6 +72,8 @@ export function createSettingsAwareStreamFn(settings: Settings, base: StreamFn =
 			antigravityEndpointMode: streamOptions?.antigravityEndpointMode ?? antigravityEndpointMode,
 			textVerbosity: streamOptions?.textVerbosity ?? textVerbosity,
 			cacheRetention: streamOptions?.cacheRetention ?? cacheRetention,
+			anthropicCacheKeepWarmMs:
+				streamOptions?.anthropicCacheKeepWarmMs ?? settings.get("providers.cacheKeepWarmMinutes") * 60_000,
 			streamFirstEventTimeoutMs: streamOptions?.streamFirstEventTimeoutMs ?? streamFirstEventTimeoutMs,
 			streamIdleTimeoutMs: streamOptions?.streamIdleTimeoutMs ?? streamIdleTimeoutMs,
 			maxRetryDelayMs: streamOptions?.maxRetryDelayMs ?? settings.get("retry.maxDelayMs"),

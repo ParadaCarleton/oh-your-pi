@@ -431,6 +431,11 @@ export interface StreamOptions {
 	 * its conversation prefix. Binding-capable models default to `"drop_block"`.
 	 */
 	anthropicPrefixMismatchBehavior?: "drop_block" | "error";
+	 * How long {@link anthropicCacheRefresh} should hold the entry warm, in ms.
+	 * Rounded down to whole keep-alive refreshes, each of which bills a full
+	 * cache read. Defaults to roughly 19 minutes; below one TTL disables them.
+	 */
+	anthropicCacheKeepWarmMs?: number;
 	/** @internal Marks a replay-only Anthropic request that must use non-streaming `max_tokens: 0`. */
 	anthropicCacheRefreshRequest?: boolean;
 	/**

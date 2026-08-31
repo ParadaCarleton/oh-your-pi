@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
-import { getPromptCacheColdAtMs, streamSimple } from "@oh-my-pi/pi-ai";
+import { getPromptCacheColdAtMs, planPromptCacheWindow, streamSimple } from "@oh-my-pi/pi-ai";
 import type { CacheControlEphemeral, MessageCreateParams } from "@oh-my-pi/pi-ai/providers/anthropic-wire";
 import type { CacheRetention, Context, FetchImpl, Model, ProviderSessionState } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
@@ -281,6 +281,21 @@ describe("Anthropic prompt-cache refresh", () => {
 		vi.advanceTimersByTime(CACHE_REFRESH_DELAY_MS * 4);
 		await Promise.resolve();
 		expect(capture.bodies).toHaveLength(1);
+	});
+
+	it("switches to the 1h entry once refreshes outprice a long write", () => {
+		// Anthropic bills a 1h write at 2x input and a read at 0.1x, against a
+		// 1.25x 5m write, so the long entry wins from the 8th refresh on.
+		const affordable = (model.cost.input * 2 - model.cost.cacheWrite) / model.cost.cacheRead;
+		expect(affordable).toBe(7.5);
+
+		const windowFor = (refreshes: number): number => 5 * 60_000 + refreshes * CACHE_REFRESH_DELAY_MS;
+		expect(planPromptCacheWindow(model, windowFor(7))).toEqual({ retention: "short", refreshes: 7 });
+		expect(planPromptCacheWindow(model, windowFor(8))).toEqual({ retention: "long", refreshes: 8 });
+		// The refresh count stays reported so an explicitly-short session still
+		// gets its keep-alive loop.
+		expect(planPromptCacheWindow(model, 60 * 60_000)).toEqual({ retention: "long", refreshes: 11 });
+		expect(planPromptCacheWindow(model, 5 * 60_000)).toEqual({ retention: "short", refreshes: 0 });
 	});
 
 	it("reports no cold time when keep-alive never armed", async () => {

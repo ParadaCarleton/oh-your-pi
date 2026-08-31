@@ -1182,6 +1182,18 @@ class AnthropicCacheRefreshState implements ProviderSessionState {
 	#plan: AnthropicCacheRefreshPlan | undefined;
 	#refreshesRemaining = 0;
 	#timer: NodeJS.Timeout | undefined;
+	#cacheTouchedAtMs: number | undefined;
+
+	/**
+	 * Projected epoch ms at which the prompt-cache entry goes cold, counting the
+	 * keep-alive refreshes still budgeted to extend it. Undefined once no entry
+	 * is being kept warm.
+	 */
+	get coldAtMs(): number | undefined {
+		if (this.#cacheTouchedAtMs === undefined) return undefined;
+		const perRefreshMs = ANTHROPIC_CACHE_TTL_MS - ANTHROPIC_CACHE_REFRESH_LEAD_MS;
+		return this.#cacheTouchedAtMs + ANTHROPIC_CACHE_TTL_MS + this.#refreshesRemaining * perRefreshMs;
+	}
 
 	cancel(): void {
 		this.#generation++;
@@ -1193,6 +1205,7 @@ class AnthropicCacheRefreshState implements ProviderSessionState {
 		this.#controller = undefined;
 		this.#plan = undefined;
 		this.#refreshesRemaining = 0;
+		this.#cacheTouchedAtMs = undefined;
 	}
 
 	arm(plan: AnthropicCacheRefreshPlan, cacheTouchedAtMs: number): void {
@@ -1207,6 +1220,7 @@ class AnthropicCacheRefreshState implements ProviderSessionState {
 	}
 
 	#schedule(cacheTouchedAtMs: number, generation: number): void {
+		this.#cacheTouchedAtMs = cacheTouchedAtMs;
 		const refreshAtMs = cacheTouchedAtMs + ANTHROPIC_CACHE_TTL_MS - ANTHROPIC_CACHE_REFRESH_LEAD_MS;
 		this.#timer = setTimeout(
 			() => {
@@ -1241,6 +1255,7 @@ class AnthropicCacheRefreshState implements ProviderSessionState {
 			return;
 		}
 
+		this.#cacheTouchedAtMs = cacheTouchedAtMs;
 		this.#refreshesRemaining--;
 		if (this.#refreshesRemaining <= 0) {
 			this.#plan = undefined;
@@ -1248,6 +1263,19 @@ class AnthropicCacheRefreshState implements ProviderSessionState {
 		}
 		this.#schedule(cacheTouchedAtMs, generation);
 	}
+}
+
+/**
+ * Projected epoch ms at which this session's prompt-cache entry goes cold,
+ * counting budgeted keep-alive refreshes. Undefined when nothing is kept warm
+ * (no entry yet, or a provider/retention combination without keep-alive).
+ */
+export function getPromptCacheColdAtMs(
+	providerSessionState: Map<string, ProviderSessionState> | undefined,
+): number | undefined {
+	const state = providerSessionState?.get(ANTHROPIC_CACHE_REFRESH_STATE_KEY);
+	if (!(state instanceof AnthropicCacheRefreshState)) return undefined;
+	return state.coldAtMs;
 }
 
 function supportsAnthropicCacheRefresh<TApi extends Api>(model: Model<TApi>): boolean {

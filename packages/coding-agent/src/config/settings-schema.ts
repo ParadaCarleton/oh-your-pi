@@ -2656,13 +2656,18 @@ export const SETTINGS_SCHEMA = {
 
 	"compaction.idleTimeoutSeconds": {
 		type: "number",
-		default: 300,
+		default: -1,
 		ui: {
 			tab: "context",
 			group: "Compaction",
 			label: "Idle Compaction Delay",
-			description: "Seconds to wait while idle before compacting",
+			description: "Seconds to wait while idle before compacting; -1 tracks the prompt cache",
 			options: [
+				{
+					value: "-1",
+					label: "Auto",
+					description: "Compact just before the prompt cache goes cold, so the summary still reads from it",
+				},
 				{ value: "60", label: "1 minute" },
 				{ value: "120", label: "2 minutes" },
 				{ value: "300", label: "5 minutes" },

@@ -1172,14 +1172,37 @@ const ANTHROPIC_CACHE_REFRESH_LEAD_MS = 15_000;
 const ANTHROPIC_CACHE_REFRESH_LIMIT = 3;
 const ANTHROPIC_CACHE_REFRESH_STATE_KEY = "anthropic-cache-refresh";
 
+/** Anthropic bills a 1h cache write at 2x base input, against 1.25x for 5m. */
+const ANTHROPIC_LONG_CACHE_WRITE_INPUT_MULTIPLIER = 2;
+
+export interface PromptCacheWindowPlan {
+	/** Cheapest retention for the requested window. */
+	retention: "short" | "long";
+	/** Keep-alive refreshes the window needs under short retention. */
+	refreshes: number;
+}
+
 /**
- * Keep-alive refreshes that fit in `keepWarmMs`, rounded down so the entry is
- * never held warm longer than asked. Undefined keeps the default budget.
+ * Cheapest way to hold a prompt-cache entry warm for `keepWarmMs`. Each
+ * keep-alive refresh bills a cache read, so once enough of them stack up to
+ * outprice a 1h cache write the long entry wins and needs no refreshing.
  */
-function anthropicRefreshBudget(keepWarmMs: number | undefined): number {
-	if (keepWarmMs === undefined) return ANTHROPIC_CACHE_REFRESH_LIMIT;
+export function planPromptCacheWindow<TApi extends Api>(
+	model: Model<TApi>,
+	keepWarmMs: number | undefined,
+): PromptCacheWindowPlan {
 	const perRefreshMs = ANTHROPIC_CACHE_TTL_MS - ANTHROPIC_CACHE_REFRESH_LEAD_MS;
-	return Math.max(0, Math.floor((keepWarmMs - ANTHROPIC_CACHE_TTL_MS) / perRefreshMs));
+	const refreshes =
+		keepWarmMs === undefined
+			? ANTHROPIC_CACHE_REFRESH_LIMIT
+			: Math.max(0, Math.floor((keepWarmMs - ANTHROPIC_CACHE_TTL_MS) / perRefreshMs));
+	const compat = model.compat;
+	const supportsLongEntry =
+		compat !== undefined && "supportsLongCacheRetention" in compat && compat.supportsLongCacheRetention;
+	if (refreshes === 0 || !supportsLongEntry) return { retention: "short", refreshes };
+	const longWriteCost = model.cost.input * ANTHROPIC_LONG_CACHE_WRITE_INPUT_MULTIPLIER;
+	const affordableRefreshes = (longWriteCost - model.cost.cacheWrite) / model.cost.cacheRead;
+	return { retention: refreshes > affordableRefreshes ? "long" : "short", refreshes };
 }
 
 interface AnthropicCacheRefreshPlan {
@@ -1468,7 +1491,7 @@ function streamSimpleWithAnthropicCacheRefresh<TApi extends Api>(
 		refreshState.arm(
 			createAnthropicCacheRefreshPlan(model, context, options, capturedPayload),
 			cacheTouchedAtMs,
-			anthropicRefreshBudget(options.anthropicCacheKeepWarmMs),
+			planPromptCacheWindow(model, options.anthropicCacheKeepWarmMs).refreshes,
 		);
 	};
 

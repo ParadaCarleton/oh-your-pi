@@ -2654,30 +2654,6 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
-	"compaction.idleTimeoutSeconds": {
-		type: "number",
-		default: -1,
-		ui: {
-			tab: "context",
-			group: "Compaction",
-			label: "Idle Compaction Delay",
-			description: "Seconds to wait while idle before compacting; -1 tracks the prompt cache",
-			options: [
-				{
-					value: "-1",
-					label: "Auto",
-					description: "Compact just before the prompt cache goes cold, so the summary still reads from it",
-				},
-				{ value: "60", label: "1 minute" },
-				{ value: "120", label: "2 minutes" },
-				{ value: "300", label: "5 minutes" },
-				{ value: "600", label: "10 minutes" },
-				{ value: "1800", label: "30 minutes" },
-				{ value: "3600", label: "1 hour" },
-			],
-		},
-	},
-
 	"compaction.supersedeReads": {
 		type: "boolean",
 		default: true,
@@ -5710,6 +5686,24 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"providers.cacheKeepWarmMinutes": {
+		type: "number",
+		default: 20,
+		ui: {
+			tab: "providers",
+			group: "Protocol",
+			label: "Keep Prompt Cache Warm",
+			description:
+				"How long to hold Anthropic's 5m cache entry open while idle; each keep-alive refresh bills a cache read",
+			options: [
+				{ value: "5", label: "Off", description: "No keep-alive refreshes — the entry expires on its own 5m TTL" },
+				{ value: "20", label: "20 minutes", description: "Three keep-alive refreshes" },
+				{ value: "40", label: "40 minutes", description: "Seven keep-alive refreshes" },
+				{ value: "60", label: "1 hour", description: "Eleven keep-alive refreshes; consider Long retention instead" },
+			],
+		},
+	},
+
 	"providers.streamFirstEventTimeoutSeconds": {
 		type: "number",
 		default: -1,
@@ -6151,7 +6145,6 @@ export interface CompactionSettings {
 	v2RetainedMessageBudget: number;
 	idleEnabled: boolean;
 	idleThresholdTokens: number;
-	idleTimeoutSeconds: number;
 	supersedeReads: boolean;
 	dropUseless: boolean;
 }

@@ -40,7 +40,9 @@ function createContext(
 		goalObjective?: string;
 		isCompacting?: boolean;
 		isStreaming?: boolean;
+		contextTokens?: number;
 		runIdleCompaction?: AgentSession["runIdleCompaction"];
+		runIdleShake?: AgentSession["runIdleShake"];
 		runEphemeralTurn?: AgentSession["runEphemeralTurn"];
 		sessionName?: string;
 		showStatus?: InteractiveModeContext["showStatus"];
@@ -48,6 +50,7 @@ function createContext(
 	} = {},
 ) {
 	const runIdleCompaction = options.runIdleCompaction ?? (async () => {});
+	const runIdleShake = options.runIdleShake ?? (async () => undefined);
 	const runEphemeralTurn =
 		options.runEphemeralTurn ?? (async () => ({ replyText: "", assistantMessage: createAssistantMessage() }));
 	const goalState: GoalModeState | undefined = options.goalObjective
@@ -70,14 +73,23 @@ function createContext(
 		sessionManager: { getSessionName: () => options.sessionName },
 		todoPhases: options.todoPhases ?? [],
 		...(options.showStatus ? { showStatus: options.showStatus } : {}),
-		session: {
+			session: {
+			agent: {
+				providerSessionState: undefined,
+				state: { messages: [createAssistantMessage()] },
+			},
 			isCompacting: options.isCompacting ?? false,
 			isStreaming: options.isStreaming ?? false,
 			runIdleCompaction,
+			runIdleShake,
 			runEphemeralTurn,
 			model: { provider: "anthropic", id: "claude-sonnet-4-5" },
 			messages: [createAssistantMessage()],
-			getContextUsage: () => ({ tokens: 210, contextWindow: 1_000, percent: 21 }),
+			getContextUsage: () => ({
+				tokens: options.contextTokens ?? 210,
+				contextWindow: 1_000,
+				percent: ((options.contextTokens ?? 210) / 1_000) * 100,
+			}),
 			getGoalModeState: () => goalState,
 		},
 	});
@@ -127,6 +139,39 @@ describe("EventController idle compaction teardown", () => {
 
 		vi.advanceTimersByTime(2_000);
 		expect(runIdleCompaction).toHaveBeenCalled();
+		controller.dispose();
+	});
+
+	it("shakes instead of compacting when the context is under the threshold", async () => {
+		const runIdleCompaction = vi.fn();
+		const runIdleShake = vi.fn(async () => ({
+			mode: "elide" as const,
+			toolResultsDropped: 2,
+			blocksDropped: 1,
+			tokensFreed: 900,
+		}));
+		const context = createContext({ contextTokens: 50, runIdleCompaction, runIdleShake });
+
+		const controller = new EventController(context);
+		await controller.handleEvent({ type: "agent_end", messages: [createAssistantMessage()] });
+		vi.advanceTimersByTime(301_000);
+
+		expect(runIdleShake).toHaveBeenCalled();
+		expect(runIdleCompaction).not.toHaveBeenCalled();
+		controller.dispose();
+	});
+
+	it("compacts rather than shaking once the context clears the threshold", async () => {
+		const runIdleCompaction = vi.fn();
+		const runIdleShake = vi.fn(async () => undefined);
+		const context = createContext({ contextTokens: 210, runIdleCompaction, runIdleShake });
+
+		const controller = new EventController(context);
+		await controller.handleEvent({ type: "agent_end", messages: [createAssistantMessage()] });
+		vi.advanceTimersByTime(301_000);
+
+		expect(runIdleCompaction).toHaveBeenCalled();
+		expect(runIdleShake).not.toHaveBeenCalled();
 		controller.dispose();
 	});
 

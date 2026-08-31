@@ -6230,6 +6230,7 @@ dependencies = [
  "image",
  "inferno",
  "libc",
+ "log",
  "napi",
  "napi-build",
  "napi-derive",

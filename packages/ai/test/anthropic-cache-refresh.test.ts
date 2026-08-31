@@ -162,6 +162,7 @@ function createFetch(modes: ResponseMode[], capture: FetchCapture): FetchImpl {
 
 interface FinishRequestOptions {
 	anthropicCacheRefresh?: boolean;
+	anthropicCacheKeepWarmMs?: number;
 	cacheRetention?: CacheRetention;
 	model?: Model<"anthropic-messages">;
 	sessionId?: string;
@@ -177,6 +178,7 @@ async function finishRequest(
 		fetch,
 		apiKey: "test-anthropic-key",
 		anthropicCacheRefresh: options.anthropicCacheRefresh ?? true,
+		anthropicCacheKeepWarmMs: options.anthropicCacheKeepWarmMs,
 		cacheRetention: options.cacheRetention,
 		providerSessionState,
 		sessionId: options.sessionId ?? "cache-refresh-test-session",
@@ -253,6 +255,32 @@ describe("Anthropic prompt-cache refresh", () => {
 			await advanceToRefresh(capture, requestCount);
 			expect(getPromptCacheColdAtMs(states)).toBe(projected);
 		}
+	});
+
+	it("spends the keep-warm budget down to whole refreshes", async () => {
+		vi.useFakeTimers();
+		const capture: FetchCapture = { bodies: [], thinkingRefreshAborted: false };
+		const fetch = createFetch(["ordinary-write", "refresh-read", "refresh-read"], capture);
+		const states = createProviderSessionState();
+
+		// 40m holds seven refreshes (5m + 7 x 4m45s = 38m15s); an eighth would overrun.
+		await finishRequest(fetch, states, { anthropicCacheKeepWarmMs: 40 * 60_000 });
+		expect(getPromptCacheColdAtMs(states)).toBe(Date.now() + 5 * 60_000 + 7 * CACHE_REFRESH_DELAY_MS);
+	});
+
+	it("arms no refreshes when the keep-warm window is one TTL", async () => {
+		vi.useFakeTimers();
+		const capture: FetchCapture = { bodies: [], thinkingRefreshAborted: false };
+		const fetch = createFetch(["ordinary-write"], capture);
+		const states = createProviderSessionState();
+
+		await finishRequest(fetch, states, { anthropicCacheKeepWarmMs: 5 * 60_000 });
+		// The entry still expires on its own TTL; nothing is scheduled to extend it.
+		expect(getPromptCacheColdAtMs(states)).toBe(Date.now() + 5 * 60_000);
+
+		vi.advanceTimersByTime(CACHE_REFRESH_DELAY_MS * 4);
+		await Promise.resolve();
+		expect(capture.bodies).toHaveLength(1);
 	});
 
 	it("reports no cold time when keep-alive never armed", async () => {

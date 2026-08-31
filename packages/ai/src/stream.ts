@@ -1172,6 +1172,16 @@ const ANTHROPIC_CACHE_REFRESH_LEAD_MS = 15_000;
 const ANTHROPIC_CACHE_REFRESH_LIMIT = 3;
 const ANTHROPIC_CACHE_REFRESH_STATE_KEY = "anthropic-cache-refresh";
 
+/**
+ * Keep-alive refreshes that fit in `keepWarmMs`, rounded down so the entry is
+ * never held warm longer than asked. Undefined keeps the default budget.
+ */
+function anthropicRefreshBudget(keepWarmMs: number | undefined): number {
+	if (keepWarmMs === undefined) return ANTHROPIC_CACHE_REFRESH_LIMIT;
+	const perRefreshMs = ANTHROPIC_CACHE_TTL_MS - ANTHROPIC_CACHE_REFRESH_LEAD_MS;
+	return Math.max(0, Math.floor((keepWarmMs - ANTHROPIC_CACHE_TTL_MS) / perRefreshMs));
+}
+
 interface AnthropicCacheRefreshPlan {
 	refresh(controller: AbortController): Promise<number | undefined>;
 }
@@ -1208,10 +1218,14 @@ class AnthropicCacheRefreshState implements ProviderSessionState {
 		this.#cacheTouchedAtMs = undefined;
 	}
 
-	arm(plan: AnthropicCacheRefreshPlan, cacheTouchedAtMs: number): void {
+	arm(plan: AnthropicCacheRefreshPlan, cacheTouchedAtMs: number, refreshBudget: number): void {
 		this.cancel();
+		this.#cacheTouchedAtMs = cacheTouchedAtMs;
+		this.#refreshesRemaining = refreshBudget;
+		// A zero budget still tracks the entry so its cold time stays readable;
+		// there is simply nothing scheduled to extend it.
+		if (refreshBudget <= 0) return;
 		this.#plan = plan;
-		this.#refreshesRemaining = ANTHROPIC_CACHE_REFRESH_LIMIT;
 		this.#schedule(cacheTouchedAtMs, this.#generation);
 	}
 
@@ -1451,7 +1465,11 @@ function streamSimpleWithAnthropicCacheRefresh<TApi extends Api>(
 		) {
 			return;
 		}
-		refreshState.arm(createAnthropicCacheRefreshPlan(model, context, options, capturedPayload), cacheTouchedAtMs);
+		refreshState.arm(
+			createAnthropicCacheRefreshPlan(model, context, options, capturedPayload),
+			cacheTouchedAtMs,
+			anthropicRefreshBudget(options.anthropicCacheKeepWarmMs),
+		);
 	};
 
 	void (async () => {

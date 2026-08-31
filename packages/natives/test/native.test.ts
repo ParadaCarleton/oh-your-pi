@@ -22,10 +22,10 @@ import {
 	htmlToMarkdown,
 	invalidateFsScanCache,
 	listWorkspace,
-	MacOSPowerAssertion,
 	macOSCheckSpelling,
 	macOSSpellCheckerAvailable,
 	matchesKey,
+	PowerAssertion,
 	PtySession,
 	parseKey,
 	pdfToMarkdown,
@@ -1069,11 +1069,26 @@ console.log("ok");
 		}, 30_000);
 	});
 
-	describe("MacOSPowerAssertion", () => {
-		it("should create a stoppable power assertion handle", () => {
-			const assertion = MacOSPowerAssertion.start({ reason: "pi-natives test" });
-			assertion.stop();
-			assertion.stop();
+	describe("PowerAssertion", () => {
+		it("should create a stoppable power assertion handle, or surface a descriptive bus/service failure where the host cannot provide one", () => {
+			let assertion: PowerAssertion | undefined;
+			try {
+				assertion = PowerAssertion.start({ reason: "pi-natives test" });
+			} catch (error) {
+				// On headless CI/containers the host has no system/session bus and
+				// login1/ScreenSaver is unavailable, so acquisition must fail — but
+				// with a *descriptive* bus/service error, not a generic native-init
+				// failure or a silently broken stub. Assert that specific contract
+				// (the documented unavailable-bus/service vocabulary) so a universally
+				// broken start() — wrong export, unrelated init error, no-op stub —
+				// cannot slip through this smoke test; any other error fails it.
+				const message = error instanceof Error ? error.message : String(error);
+				expect(message).toMatch(/(system|session) bus|login1|screensaver|inhibit/i);
+				return;
+			}
+			// Success path: a real, idempotently stoppable handle.
+			assertion?.stop();
+			assertion?.stop();
 		});
 	});
 

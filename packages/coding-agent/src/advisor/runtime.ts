@@ -87,6 +87,9 @@ export interface AdvisorRuntimeHost {
 	notifyQuotaExhausted?(): void;
 	/** Stable identity for the live advisor model. Used to restore full transcript rendering after a model switch. */
 	getModelIdentity?(): string;
+	/** Called when the pending-review backlog transitions, so sleep prevention
+	 *  counts an in-flight review as session work outliving the primary turn. */
+	onActivity?(): void;
 }
 
 /**
@@ -836,6 +839,7 @@ export class AdvisorRuntime {
 	}
 
 	#notifyWaiters(): void {
+		this.host.onActivity?.();
 		for (let i = this.#waiters.length - 1; i >= 0; i--) {
 			const w = this.#waiters[i];
 			if (this.#backlog < w.threshold) {
@@ -845,6 +849,7 @@ export class AdvisorRuntime {
 	}
 
 	#wakeAllWaiters(): void {
+		this.host.onActivity?.();
 		for (const w of [...this.#waiters]) {
 			w.finish(false);
 		}

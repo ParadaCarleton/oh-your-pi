@@ -112,7 +112,6 @@ describe("EventController idle compaction teardown", () => {
 			overrides: {
 				"compaction.idleEnabled": true,
 				"compaction.idleThresholdTokens": 100,
-				"compaction.idleTimeoutSeconds": 60,
 			},
 		});
 		vi.useFakeTimers();
@@ -131,9 +130,24 @@ describe("EventController idle compaction teardown", () => {
 		const controller = new EventController(context);
 		await controller.handleEvent({ type: "agent_end", messages: [createAssistantMessage()] });
 		controller.dispose();
-		vi.advanceTimersByTime(60_000);
+		// Past the no-cache fallback delay, so a surviving timer would have fired.
+		vi.advanceTimersByTime(360_000);
 
 		expect(runIdleCompaction).not.toHaveBeenCalled();
+	});
+
+	it("compacts at the fallback delay when no prompt cache is being kept warm", async () => {
+		const runIdleCompaction = vi.fn();
+		const context = createContext({ runIdleCompaction });
+
+		const controller = new EventController(context);
+		await controller.handleEvent({ type: "agent_end", messages: [createAssistantMessage()] });
+		vi.advanceTimersByTime(299_000);
+		expect(runIdleCompaction).not.toHaveBeenCalled();
+
+		vi.advanceTimersByTime(2_000);
+		expect(runIdleCompaction).toHaveBeenCalled();
+		controller.dispose();
 	});
 
 	it("emits an LLM-generated recap after the default four-minute delay", async () => {

@@ -99,16 +99,18 @@ describe("CommandController /shake", () => {
 		const invalidate = vi.fn();
 		const requestRender = vi.fn();
 		const showStatus = vi.fn();
+		const session = {
+			shake: vi.fn(async () => ({
+				mode: "thinking" as const,
+				toolResultsDropped: 0,
+				blocksDropped: 0,
+				thinkingBlocksDropped: 2,
+				tokensFreed: 0,
+			})),
+		};
 		const ctx = {
-			session: {
-				shake: vi.fn(async () => ({
-					mode: "thinking" as const,
-					toolResultsDropped: 0,
-					blocksDropped: 0,
-					thinkingBlocksDropped: 2,
-					tokensFreed: 0,
-				})),
-			},
+			session,
+			viewSession: session,
 			rebuildChatFromMessages,
 			statusLine: { invalidate },
 			ui: { requestRender },

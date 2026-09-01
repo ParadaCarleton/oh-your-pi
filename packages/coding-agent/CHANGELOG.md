@@ -353,6 +353,11 @@
 - Fixed Enter being ignored during the first turn when omp starts with an initial prompt.
 - Fixed idle compaction discarding context while the session was still waiting on a backgrounded async job ([#10223](https://github.com/can1357/oh-my-pi/pull/10223) by [@mattwilkinsonn](https://github.com/mattwilkinsonn)).
 - Fixed LSP idle timeout clobbering in multi-workspace sessions and unmanaged timer spawning on pure config reads ([#10237](https://github.com/can1357/oh-my-pi/pull/10237) by [@harshaygadekar](https://github.com/harshaygadekar)).
+- Fixed an issue where custom model overrides were lost during configuration updates
+- Fixed "Please use nerdfont" notification incorrectly persisting after theme configuration
+- Fixed sampling parameter errors for newer Anthropic models (Opus 4.7+, Sonnet 5+)
+- Fixed trailing assistant text being truncated when a tool call started mid-stream: the smooth-streaming reveal now force-completes at the tool-call boundary instead of leaving un-revealed text to be committed to scrollback ([#10318](https://github.com/can1357/oh-my-pi/issues/10318)).
+- Fixed agents in a `hub` wait loop leaving a user's message unanswered: the tool prompt now separates a user steering message from the pollable wake reasons, and states that only a plain text block reaches the user ([#10437](https://github.com/can1357/oh-my-pi/pull/10437)).
 
 ## [18.0.11] - 2026-08-29
 

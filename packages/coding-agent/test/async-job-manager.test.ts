@@ -293,6 +293,50 @@ describe("AsyncJobManager", () => {
 		expect(attempts).toBe(attemptsAfterAck);
 	});
 
+	test("unwatchJobs delivers a job that settled while a hub wait watched it", async () => {
+		const delivered: string[] = [];
+		const manager = new AsyncJobManager({
+			onJobComplete: async jobId => {
+				delivered.push(jobId);
+			},
+		});
+
+		// A `hub` wait watches every running job, then unwatches them all as soon
+		// as the race resolves — jobs settling in that window must still deliver.
+		const jobId = manager.register("task", "watched-job", async () => "done");
+		manager.watchJobs([jobId]);
+		await manager.waitForAll();
+		await manager.drainDeliveries({ timeoutMs: 200 });
+		expect(delivered).toEqual([]);
+
+		manager.unwatchJobs([jobId]);
+		await manager.drainDeliveries({ timeoutMs: 200 });
+		expect(delivered).toEqual([jobId]);
+
+		// Exactly once: a second unwatch must not replay the result.
+		manager.unwatchJobs([jobId]);
+		await manager.drainDeliveries({ timeoutMs: 200 });
+		expect(delivered).toEqual([jobId]);
+	});
+
+	test("unwatchJobs holds delivery while an acknowledgement still suppresses it", async () => {
+		const delivered: string[] = [];
+		const manager = new AsyncJobManager({
+			onJobComplete: async jobId => {
+				delivered.push(jobId);
+			},
+		});
+
+		const jobId = manager.register("task", "double-suppressed", async () => "done");
+		manager.watchJobs([jobId]);
+		manager.acknowledgeDeliveries([jobId]);
+		await manager.waitForAll();
+
+		manager.unwatchJobs([jobId]);
+		await manager.drainDeliveries({ timeoutMs: 200 });
+		expect(delivered).toEqual([]);
+	});
+
 	test("dispose clears jobs and pending deliveries", async () => {
 		const manager = new AsyncJobManager({
 			onJobComplete: async () => {

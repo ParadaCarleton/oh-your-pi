@@ -35,11 +35,10 @@ function createCwdContext(sourceDir: string, isStreaming = false, showImages = t
 	});
 	const pendingMessagesContainer = createContainer();
 	const present = vi.fn();
+	const session = { isStreaming, executeBash };
 	const ctx = {
-		session: {
-			isStreaming,
-			executeBash,
-		},
+		session,
+		viewSession: session,
 		sessionManager: {
 			getCwd: () => state.cwd,
 			moveTo: vi.fn(async (cwd: string) => {
@@ -86,11 +85,10 @@ describe("bash shortcut command", () => {
 			outputLines: 1,
 			outputBytes: 2,
 		});
+		const session = { isStreaming: false, executeBash };
 		const ctx = {
-			session: {
-				isStreaming: false,
-				executeBash,
-			},
+			session,
+			viewSession: session,
 			sessionManager: {
 				getCwd: () => "/tmp",
 			},

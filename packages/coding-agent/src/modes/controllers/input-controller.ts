@@ -53,6 +53,18 @@ import { resizeImage } from "../../utils/image-resize";
  * The command name is extracted the same way as parseSlashCommand() — splitting
  * on the earliest whitespace or colon — so /login:?code=... is correctly matched.
  */
+/**
+ * Slash commands whose TUI handlers act on `ctx.viewSession`, so they mean the
+ * focused subagent while one is attached. Every other builtin reads
+ * `ctx.session` and is refused with a status line instead.
+ */
+const FOCUS_SCOPED_SLASH_COMMANDS: Record<string, true> = {
+	compact: true,
+	shake: true,
+	switch: true,
+	tree: true,
+};
+
 export function shouldSkipHistory(slashText: string): boolean {
 	if (!slashText.startsWith("/")) return false;
 	const body = slashText.slice(1);
@@ -1073,9 +1085,20 @@ export class InputController {
 			}
 			return;
 		}
-		if (text && (text.startsWith("/") || text.startsWith("!") || parsePythonCommandInput(text))) {
-			this.ctx.showStatus("Commands run in the main session — press ←← to return first");
+		if (text?.startsWith("/")) {
+			const name = parseSlashCommand(text)?.name;
+			if (name !== undefined && FOCUS_SCOPED_SLASH_COMMANDS[name] === true) {
+				this.#recordSlashCommandUsage(text);
+				await executeBuiltinSlashCommand(text, { ctx: this.ctx });
+				if (!shouldSkipHistory(text)) this.ctx.editor.addToHistory(text);
+				return;
+			}
+			this.ctx.showStatus(`/${name ?? ""} runs in the main session — press ←← to return first`);
 			return; // editor text not cleared: Editor does not auto-clear on submit
+		}
+		if (text && (text.startsWith("!") || parsePythonCommandInput(text))) {
+			this.ctx.showStatus("Shell and Python commands run in the main session — press ←← to return first");
+			return;
 		}
 		this.ctx.editor.clearDraft(text);
 		try {

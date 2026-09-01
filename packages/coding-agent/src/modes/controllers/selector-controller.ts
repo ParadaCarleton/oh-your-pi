@@ -816,10 +816,10 @@ export class SelectorController {
 	 * highlighted and preselected; a leading `@` searches ctrl+p quick roles.
 	 */
 	#showModelPicker(): void {
-		const currentContextTokens = this.ctx.session.getContextUsage()?.tokens ?? 0;
-		const current = this.ctx.session.model;
+		const currentContextTokens = this.ctx.viewSession.getContextUsage()?.tokens ?? 0;
+		const current = this.ctx.viewSession.model;
 		const quickRoleOrder = this.ctx.settings.get("cycleOrder");
-		const quickRoleCycle = this.ctx.session.getRoleModelCycle(quickRoleOrder);
+		const quickRoleCycle = this.ctx.viewSession.getRoleModelCycle(quickRoleOrder);
 		const currentSelector = current ? `${current.provider}/${current.id}` : undefined;
 		// Preselect the effective Task model in task mode: the configured override,
 		// else the session model (the bundled task agent inherits it by default).
@@ -836,14 +836,14 @@ export class SelectorController {
 		const picker = new ModelPickerComponent(
 			this.ctx.ui,
 			this.ctx.settings,
-			this.ctx.session.modelRegistry,
-			this.ctx.session.scopedModels,
+			this.ctx.viewSession.modelRegistry,
+			this.ctx.viewSession.scopedModels,
 			{
 				onPick: async (model, selector, { overContext }) => {
 					// Session-only: update agent state but don't persist the model to settings.
 					const applySessionModel = async () => {
-						const roleThinkingLevel = this.ctx.session.resolveTemporaryModelThinkingLevel(model);
-						await this.ctx.session.setModelTemporary(model, roleThinkingLevel);
+						const roleThinkingLevel = this.ctx.viewSession.resolveTemporaryModelThinkingLevel(model);
+						await this.ctx.viewSession.setModelTemporary(model, roleThinkingLevel);
 						this.ctx.statusLine.invalidate();
 						this.ctx.updateEditorBorderColor();
 						const roleSelectorHint = this.ctx.keybindings.getKeys("app.model.select")[0] ?? "Alt+M";
@@ -878,7 +878,7 @@ export class SelectorController {
 				},
 				onPickRole: async entry => {
 					try {
-						await this.ctx.session.applyRoleModel(entry);
+						await this.ctx.viewSession.applyRoleModel(entry);
 						this.ctx.statusLine.invalidate();
 						this.ctx.updateEditorBorderColor();
 						this.ctx.showModelCycleTrack(
@@ -1460,8 +1460,8 @@ export class SelectorController {
 
 	showTreeSelector(options: { includeArchived?: boolean } = {}): void {
 		const includeArchived = options.includeArchived ?? false;
-		const tree = this.ctx.sessionManager.getTree({ includeArchived });
-		const realLeafId = this.ctx.sessionManager.getLeafId();
+		const tree = this.ctx.viewSession.sessionManager.getTree({ includeArchived });
+		const realLeafId = this.ctx.viewSession.sessionManager.getLeafId();
 
 		if (tree.length === 0) {
 			this.ctx.showStatus("No entries in session");
@@ -1479,7 +1479,7 @@ export class SelectorController {
 					// must still be allowed to reopen the picker even though the leaf
 					// doesn't move (chatgpt-codex review on #5895).
 					if (entryId === realLeafId) {
-						const currentEntry = this.ctx.sessionManager.getEntry(entryId);
+						const currentEntry = this.ctx.viewSession.sessionManager.getEntry(entryId);
 						const currentIsAskResult =
 							currentEntry?.type === "message" &&
 							currentEntry.message.role === "toolResult" &&
@@ -1541,7 +1541,7 @@ export class SelectorController {
 
 					if (wantsSummary) {
 						this.ctx.editor.onEscape = () => {
-							this.ctx.session.abortBranchSummary();
+							this.ctx.viewSession.abortBranchSummary();
 						};
 						this.ctx.chatContainer.addChild(new Spacer(1));
 						summaryLoader = new Loader(
@@ -1556,7 +1556,7 @@ export class SelectorController {
 					}
 
 					try {
-						let result = await this.ctx.session.navigateTree(entryId, {
+						let result = await this.ctx.viewSession.navigateTree(entryId, {
 							summarize: wantsSummary,
 							customInstructions,
 							allowAskReopen: true,
@@ -1571,7 +1571,7 @@ export class SelectorController {
 								this.ctx.showStatus("Re-answer cancelled");
 								return;
 							}
-							result = await this.ctx.session.navigateTree(entryId, {
+							result = await this.ctx.viewSession.navigateTree(entryId, {
 								summarize: wantsSummary,
 								customInstructions,
 								allowAskReopen: true,
@@ -1597,7 +1597,7 @@ export class SelectorController {
 							!wantsSummary &&
 							!result.summaryEntry &&
 							!result.askReanswerCommitted &&
-							this.ctx.sessionManager.getLeafId() === treeRewind.expectedLeafId &&
+							this.ctx.viewSession.sessionManager.getLeafId() === treeRewind.expectedLeafId &&
 							this.ctx.truncateTranscriptFromMessage(treeRewind.message);
 						if (!fastRewind) {
 							await this.ctx.renderInitialMessages({ clearTerminalHistory: true });
@@ -1614,7 +1614,7 @@ export class SelectorController {
 						// new answer without the resumed turn rendering against the stale
 						// pre-rebuild UI (issue #6483).
 						if (result.askReanswerCommitted) {
-							this.ctx.session.resumeAfterAskReanswer();
+							this.ctx.viewSession.resumeAfterAskReanswer();
 						}
 					} catch (error) {
 						this.ctx.showError(error instanceof Error ? error.message : String(error));
@@ -1631,7 +1631,7 @@ export class SelectorController {
 					this.ctx.ui.requestRender();
 				},
 				(entryId, label) => {
-					this.ctx.sessionManager.appendLabelChange(entryId, label);
+					this.ctx.viewSession.sessionManager.appendLabelChange(entryId, label);
 					this.ctx.ui.requestRender();
 				},
 				settings.get("treeFilterMode"),
@@ -1648,12 +1648,12 @@ export class SelectorController {
 					// branch removes it from the tree the component is holding, and
 					// restoring one is only reachable while archived rows are showing.
 					onArchiveToggle: async (entryId: string) => {
-						const archived = this.ctx.sessionManager.getArchivedRootIds().includes(entryId);
+						const archived = this.ctx.viewSession.sessionManager.getArchivedRootIds().includes(entryId);
 						try {
 							if (archived) {
-								await this.ctx.session.restoreArchived(entryId);
+								await this.ctx.viewSession.restoreArchived(entryId);
 							} else {
-								const hidden = await this.ctx.session.archiveBranch(entryId);
+								const hidden = await this.ctx.viewSession.archiveBranch(entryId);
 								if (hidden === 0) return;
 							}
 						} catch (error) {
@@ -1685,17 +1685,17 @@ export class SelectorController {
 		leafId: string | null,
 	): { message: AgentMessage; expectedLeafId: string } | undefined {
 		if (!leafId) return undefined;
-		const target = this.ctx.sessionManager.getEntry(targetId);
+		const target = this.ctx.viewSession.sessionManager.getEntry(targetId);
 		if (!target) return undefined;
 		const rewindsPastTarget = target.type === "message" && target.message.role === "user";
 		if (!rewindsPastTarget && target.type === "custom_message") return undefined;
 		// Walk leaf → root: proves the target is on the current path and finds
 		// the first entry the rewind drops.
 		let firstDropped: SessionEntry | undefined;
-		let cursor = this.ctx.sessionManager.getEntry(leafId);
+		let cursor = this.ctx.viewSession.sessionManager.getEntry(leafId);
 		while (cursor && cursor.id !== targetId) {
 			firstDropped = cursor;
-			cursor = cursor.parentId ? this.ctx.sessionManager.getEntry(cursor.parentId) : undefined;
+			cursor = cursor.parentId ? this.ctx.viewSession.sessionManager.getEntry(cursor.parentId) : undefined;
 		}
 		if (!cursor) return undefined;
 		const boundary = rewindsPastTarget ? target : firstDropped;

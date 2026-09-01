@@ -1795,8 +1795,6 @@ export interface PowerAssertionOptions {
   display?: boolean
 }
 
-=======
->>>>>>> refs/rewritten/Merge-feat-cross-platform-power-assertion-upstream-ready-PowerAssertion
 /** Whether the host can use Apple's native spelling service. */
 export declare function macOSSpellCheckerAvailable(): boolean
 

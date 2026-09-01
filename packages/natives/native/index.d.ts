@@ -177,9 +177,9 @@ export declare class MacAppearanceObserver {
 /**
  * Long-lived cross-platform power assertion.
  *
- * macOS uses IOKit, Linux holds a login1 inhibitor file descriptor, and
- * Windows holds thread-affine execution state until the handle is stopped or
- * dropped. Other platforms return a no-op handle.
+ * macOS uses `IOKit`, Linux holds login1 and desktop ScreenSaver inhibitors,
+ * and Windows holds thread-affine execution state until the handle is stopped
+ * or dropped. Other platforms return a no-op handle.
  */
 export declare class PowerAssertion {
   /**
@@ -1795,6 +1795,8 @@ export interface PowerAssertionOptions {
   display?: boolean
 }
 
+=======
+>>>>>>> refs/rewritten/Merge-feat-cross-platform-power-assertion-upstream-ready-PowerAssertion
 /** Whether the host can use Apple's native spelling service. */
 export declare function macOSSpellCheckerAvailable(): boolean
 
@@ -2030,6 +2032,30 @@ export interface PointerOptions {
   count?: number
   modifiers?: Array<string>
   deliveryMode?: string
+}
+
+/**
+ * Options for starting a power assertion.
+ *
+ * Each boolean maps to a `caffeinate(8)` flag and the closest corresponding
+ * platform capability. Multiple flags can be combined; when set, one
+ * assertion is taken per flag and all are released together when the
+ * handle is stopped or dropped.
+ *
+ * If every flag is unset (or omitted), the handle behaves as if `idle`
+ * were `true` — preserving the historical default of `caffeinate -i`.
+ */
+export interface PowerAssertionOptions {
+  /** Human-readable reason shown in platform power diagnostics. */
+  reason?: string
+  /** `caffeinate -i`: prevent the system from idle-sleeping. */
+  idle?: boolean
+  /** `caffeinate -s`: prevent the system from sleeping (AC power only). */
+  system?: boolean
+  /** `caffeinate -u`: declare the user is active (wakes the display). */
+  user?: boolean
+  /** `caffeinate -d`: prevent the display from idle-sleeping. */
+  display?: boolean
 }
 
 /** Current state of a process reference. */

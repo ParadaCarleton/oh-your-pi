@@ -1771,30 +1771,6 @@ export declare function macOSCheckSpelling(text: string): Promise<Array<Spelling
  */
 export declare function macOSCompleteWord(text: string, start: number, length: number): Promise<Array<string>>
 
-/**
- * Options for starting a power assertion.
- *
- * Each boolean maps to a `caffeinate(8)` flag and the closest corresponding
- * platform capability. Multiple flags can be combined; when set, one
- * assertion is taken per flag and all are released together when the
- * handle is stopped or dropped.
- *
- * If every flag is unset (or omitted), the handle behaves as if `idle`
- * were `true` — preserving the historical default of `caffeinate -i`.
- */
-export interface PowerAssertionOptions {
-  /** Human-readable reason shown in platform power diagnostics. */
-  reason?: string
-  /** `caffeinate -i`: prevent the system from idle-sleeping. */
-  idle?: boolean
-  /** `caffeinate -s`: prevent the system from sleeping (AC power only). */
-  system?: boolean
-  /** `caffeinate -u`: declare the user is active (wakes the display). */
-  user?: boolean
-  /** `caffeinate -d`: prevent the display from idle-sleeping. */
-  display?: boolean
-}
-
 /** Whether the host can use Apple's native spelling service. */
 export declare function macOSSpellCheckerAvailable(): boolean
 

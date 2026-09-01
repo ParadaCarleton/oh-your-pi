@@ -893,9 +893,8 @@ export class AdvisorRuntime {
 	}
 
 	#wakeAllWaiters(): void {
-		for (const w of Array.from(this.#waiters)) {
 		this.host.onActivity?.();
-		for (const w of [...this.#waiters]) {
+		for (const w of Array.from(this.#waiters)) {
 			w.finish(false);
 		}
 	}

@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Renamed `MacOSPowerAssertion` to `PowerAssertion` and `MacOSPowerAssertionOptions` to `PowerAssertionOptions`. The options and handle shape are unchanged.
+
+### Added
+
+- Added Linux sleep inhibition to `PowerAssertion` through a logind (`org.freedesktop.login1`) inhibitor descriptor, supplemented for `display` by a best-effort `org.freedesktop.ScreenSaver` cookie.
+- Added Windows sleep inhibition to `PowerAssertion` through `SetThreadExecutionState` on a dedicated thread.
+
+### Changed
+
+- `PowerAssertion.start` reports acquisition failures on Linux and Windows rather than returning a handle that silently does nothing. Platforms with no implementation still receive a no-op handle.
+
 ## [18.0.11] - 2026-08-29
 
 ### Fixed
@@ -248,9 +261,6 @@
 
 - Split the native voice engine (miniaudio capture/playback, WebRTC peer, Opus media) out of the `pi-natives` addon crate into a napi-free `pi-voice` rlib. The addon keeps thin `#[napi]` adapters, so the JS API is unchanged; the webrtc/opus/miniaudio dependency graph now compiles once into the library and no longer rebuilds with the addon leaf (which recompiles every release via its version-sentinel edit).
 - Release binaries now build in parallel with the test fan-out; npm leaf publishing moved to a dedicated post-validation job (`release_native_leaves`), and darwin release bazel caches are pre-warmed on native-affecting main pushes — cutting release wall time from the previous serialized tests → cold darwin build pipeline.
-### Changed
-
-- Renamed `MacOSPowerAssertion` to `PowerAssertion` and added Linux login1 and Windows execution-state sleep inhibition.
 
 ## [17.1.8] - 2026-07-28
 

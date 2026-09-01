@@ -211,7 +211,7 @@ mod platform {
 	static SYSTEM_BUS: Mutex<Option<Connection>> = Mutex::new(None);
 	static SESSION_BUS: Mutex<Option<Connection>> = Mutex::new(None);
 
-	/// Holds login1's inhibitor descriptor and the desktop ScreenSaver cookie.
+	/// Holds login1's inhibitor descriptor and the desktop `ScreenSaver` cookie.
 	/// Closing the descriptor and releasing the cookie removes both inhibits.
 	pub struct AssertionInner {
 		login1_inhibitor:   Option<OwnedFd>,
@@ -399,7 +399,7 @@ mod platform {
 
 /// Long-lived cross-platform power assertion.
 ///
-/// macOS uses `IOKit`, Linux holds login1 and desktop ScreenSaver inhibitors,
+/// macOS uses `IOKit`, Linux holds login1 and desktop `ScreenSaver` inhibitors,
 /// and Windows holds thread-affine execution state until the handle is stopped
 /// or dropped. Other platforms return a no-op handle.
 #[napi(js_name = "PowerAssertion")]

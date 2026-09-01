@@ -1075,18 +1075,12 @@ console.log("ok");
 			try {
 				assertion = PowerAssertion.start({ reason: "pi-natives test" });
 			} catch (error) {
-				// On headless CI/containers the host has no system/session bus and
-				// login1/ScreenSaver is unavailable, so acquisition must fail — but
-				// with a *descriptive* bus/service error, not a generic native-init
-				// failure or a silently broken stub. Assert that specific contract
-				// (the documented unavailable-bus/service vocabulary) so a universally
-				// broken start() — wrong export, unrelated init error, no-op stub —
-				// cannot slip through this smoke test; any other error fails it.
+				// A host with no bus must fail in the documented bus/service vocabulary,
+				// so a wrong export or a no-op stub fails on any other message.
 				const message = error instanceof Error ? error.message : String(error);
 				expect(message).toMatch(/(system|session) bus|login1|screensaver|inhibit/i);
 				return;
 			}
-			// Success path: a real, idempotently stoppable handle.
 			assertion?.stop();
 			assertion?.stop();
 		});

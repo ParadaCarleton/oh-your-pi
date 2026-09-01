@@ -17,7 +17,12 @@ const outfile = process.argv[2];
 if (!outfile) throw new Error("usage: ompf-compile.ts <outfile>");
 
 const manifest: unknown = createRequire(import.meta.url)("@huggingface/transformers/package.json");
-if (typeof manifest !== "object" || manifest === null || !("version" in manifest) || typeof manifest.version !== "string") {
+if (
+	typeof manifest !== "object" ||
+	manifest === null ||
+	!("version" in manifest) ||
+	typeof manifest.version !== "string"
+) {
 	throw new Error("@huggingface/transformers package manifest has no string version");
 }
 
@@ -36,5 +41,8 @@ try {
 		minifyIdentifiers: false,
 	});
 } finally {
-	await Bun.$`bun run gen:stats:reset`.cwd(path.join(repoRoot, "packages", "stats")).quiet().nothrow();
+	await Bun.$`bun run gen:stats:reset`
+		.cwd(path.join(repoRoot, "packages", "stats"))
+		.quiet()
+		.nothrow();
 }

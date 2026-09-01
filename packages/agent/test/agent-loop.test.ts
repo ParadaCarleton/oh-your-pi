@@ -1480,7 +1480,7 @@ describe("agentLoop with AgentMessage", () => {
 		expect(assistantEnd.message.content.some(block => block.type === "toolCall")).toBe(false);
 	});
 
-	it("should skip remaining tool calls when steering is queued", async () => {
+	it("should skip remaining interruptible tool calls when steering is queued", async () => {
 		const toolSchema = type({ value: "string" });
 		const executed: string[] = [];
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
@@ -1489,6 +1489,7 @@ describe("agentLoop with AgentMessage", () => {
 			description: "Echo tool",
 			parameters: toolSchema,
 			concurrency: "exclusive",
+			interruptible: true,
 			async execute(_toolCallId, params) {
 				executed.push(params.value);
 				return {
@@ -1578,7 +1579,7 @@ describe("agentLoop with AgentMessage", () => {
 		expect(sawInterruptInContext).toBe(true);
 	});
 
-	it("should skip remaining tool calls with system advisory wording when advisor steering is queued", async () => {
+	it("should skip remaining interruptible tool calls with system advisory wording when advisor steering is queued", async () => {
 		const toolSchema = type({ value: "string" });
 		const executed: string[] = [];
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
@@ -1587,6 +1588,7 @@ describe("agentLoop with AgentMessage", () => {
 			description: "Echo tool",
 			parameters: toolSchema,
 			concurrency: "exclusive",
+			interruptible: true,
 			async execute(_toolCallId, params) {
 				executed.push(params.value);
 				return {
@@ -1669,6 +1671,79 @@ describe("agentLoop with AgentMessage", () => {
 				event.message.content === "pause before continuing",
 		);
 		expect(advisorInjected).toBe(true);
+	});
+
+	it("runs a queued non-interruptible tool when user steering is queued (#10439)", async () => {
+		const toolSchema = type({ value: "string" });
+		const executed: string[] = [];
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "edit",
+			label: "Edit",
+			description: "Non-interruptible foreground work",
+			parameters: toolSchema,
+			concurrency: "exclusive",
+			async execute(_toolCallId, params) {
+				executed.push(params.value);
+				return {
+					content: [{ type: "text", text: `ok:${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: [""], messages: [], tools: [tool] };
+		let drained = false;
+
+		const mock = createMockModel({
+			responses: [
+				{
+					content: [
+						{ type: "toolCall", id: "tool-1", name: "edit", arguments: { value: "first" } },
+						{ type: "toolCall", id: "tool-2", name: "edit", arguments: { value: "second" } },
+					],
+				},
+				{ content: ["done"] },
+			],
+		});
+
+		// The steer lands after the run's opening poll and before the batch — the
+		// window the user types in while the model streams the edit's arguments.
+		const steerQueued = (): boolean => mock.calls.length >= 1 && !drained;
+		const config: AgentLoopConfig = {
+			model: mock.model,
+			convertToLlm: identityConverter,
+			interruptMode: "immediate",
+			hasSteeringMessages: () => (steerQueued() ? { queued: true, source: "user" } : { queued: false }),
+			waitForSteeringMessages: async signal => {
+				if (steerQueued()) return;
+				const waiter = Promise.withResolvers<void>();
+				signal?.addEventListener("abort", () => waiter.resolve(), { once: true });
+				await waiter.promise;
+			},
+			getSteeringMessages: async () => {
+				if (!steerQueued()) return [];
+				drained = true;
+				return [createUserMessage("also rename it")];
+			},
+		};
+
+		const events: AgentEvent[] = [];
+		for await (const event of agentLoop([createUserMessage("start")], context, config, undefined, mock.stream)) {
+			events.push(event);
+		}
+
+		expect(executed).toEqual(["first", "second"]);
+
+		const toolEnds = events.filter(
+			(e): e is Extract<AgentEvent, { type: "tool_execution_end" }> => e.type === "tool_execution_end",
+		);
+		expect(toolEnds.map(e => e.isError)).toEqual([false, false]);
+
+		// The steer still injects at the batch boundary, before the next model call.
+		const sawSteerInContext = mock.calls[1]?.context.messages.some(
+			m => m.role === "user" && m.content === "also rename it",
+		);
+		expect(sawSteerInContext).toBe(true);
 	});
 
 	it("drains queued steering by aborting an interruptible tool mid-wait", async () => {
@@ -2369,6 +2444,7 @@ describe("agentLoop with AgentMessage", () => {
 			description: "Echo tool",
 			parameters: toolSchema,
 			concurrency: "exclusive",
+			interruptible: true,
 			async execute(_toolCallId, params) {
 				executed.push(params.value);
 				return {
@@ -2834,6 +2910,7 @@ describe("agentLoop event-driven steering watch", () => {
 			description: "Echo tool",
 			parameters: toolSchema,
 			concurrency: "exclusive",
+			interruptible: true,
 			async execute(_toolCallId, params) {
 				executed.push(params.value);
 				// Make a steer available and wake the watcher, the way a real queue

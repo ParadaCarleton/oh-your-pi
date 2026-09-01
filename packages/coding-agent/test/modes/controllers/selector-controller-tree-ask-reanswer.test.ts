@@ -98,15 +98,17 @@ function createCtx(leafEntry: SessionEntry, navigateTreeResult: unknown = { canc
 	const resumeAfterAskReanswer = vi.fn(() => {
 		order.push("resume");
 	});
+	const sessionManager = {
+		getTree: () => tree,
+		getLeafId: () => leafEntry.id,
+		getEntry: (id: string) => (id === leafEntry.id ? leafEntry : undefined),
+	};
 	const ctx = {
 		editor: { id: "editor", getText: () => "", setText: vi.fn() },
 		editorContainer,
-		sessionManager: {
-			getTree: () => tree,
-			getLeafId: () => leafEntry.id,
-			getEntry: (id: string) => (id === leafEntry.id ? leafEntry : undefined),
-		},
-		session: { navigateTree, resumeAfterAskReanswer },
+		sessionManager,
+		session: { navigateTree, resumeAfterAskReanswer, sessionManager },
+		viewSession: { navigateTree, resumeAfterAskReanswer, sessionManager },
 		ui: {
 			setFocus: vi.fn(),
 			requestRender: vi.fn(),

@@ -151,7 +151,7 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 		acpInputHint: `[${COMPACT_MODES.map(mode => mode.name).join("|")}] [focus]`,
 		allowArgs: true,
 		getTuiAutocompleteDescription: runtime => {
-			const usage = runtime.ctx.session.getContextUsage();
+			const usage = runtime.ctx.viewSession.getContextUsage();
 			return usage ? `Compact: context ${Math.round(usage.percent)}% used` : "Compact: context unavailable";
 		},
 		handle: async (command, runtime) => {

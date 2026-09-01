@@ -65,12 +65,13 @@ function createHarness(summaryChoice = "No summary"): TreeSummaryHarness {
 		return { cancelled: false };
 	});
 	let selector: { handleInput(key: string): void } | undefined;
+	const sessionManager = {
+		getTree: () => [root],
+		getLeafId: () => null,
+		appendLabelChange: vi.fn(),
+	};
 	const ctx = {
-		sessionManager: {
-			getTree: () => [root],
-			getLeafId: () => null,
-			appendLabelChange: vi.fn(),
-		},
+		sessionManager,
 		ui: {
 			terminal: { rows: 40 },
 			setFocus: vi.fn(),
@@ -100,6 +101,12 @@ function createHarness(summaryChoice = "No summary"): TreeSummaryHarness {
 		session: {
 			navigateTree,
 			abortBranchSummary: vi.fn(),
+			sessionManager,
+		},
+		viewSession: {
+			navigateTree,
+			abortBranchSummary: vi.fn(),
+			sessionManager,
 		},
 	} as unknown as InteractiveModeContext;
 	const controller = new SelectorController(ctx);

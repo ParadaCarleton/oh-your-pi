@@ -1244,7 +1244,7 @@ export class CommandController {
 	}
 
 	async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
-		const isDeferred = this.ctx.viewSession.isStreaming;
+		const isDeferred = this.ctx.session.isStreaming;
 		const shouldPersistCwd = isPersistentShellCdCommand(command);
 		if (isDeferred && shouldPersistCwd) {
 			this.ctx.showWarning("Wait for the current response to finish or abort it before changing directories.");
@@ -1262,7 +1262,7 @@ export class CommandController {
 		this.ctx.ui.requestRender();
 
 		try {
-			const result = await this.ctx.viewSession.executeBash(
+			const result = await this.ctx.session.executeBash(
 				command,
 				chunk => {
 					if (this.ctx.bashComponent) {
@@ -1345,7 +1345,7 @@ export class CommandController {
 	}
 
 	async handlePythonCommand(code: string, excludeFromContext = false): Promise<void> {
-		const isDeferred = this.ctx.viewSession.isStreaming;
+		const isDeferred = this.ctx.session.isStreaming;
 		this.ctx.pythonComponent = new EvalExecutionComponent(code, this.ctx.ui, excludeFromContext);
 
 		if (isDeferred) {
@@ -1357,7 +1357,7 @@ export class CommandController {
 		this.ctx.ui.requestRender();
 
 		try {
-			const result = await this.ctx.viewSession.executePython(
+			const result = await this.ctx.session.executePython(
 				code,
 				chunk => {
 					if (this.ctx.pythonComponent) {

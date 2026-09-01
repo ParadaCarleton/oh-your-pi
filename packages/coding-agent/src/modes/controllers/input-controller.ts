@@ -399,15 +399,6 @@ export class InputController {
 				return;
 			}
 			if (this.ctx.focusedAgentId) {
-				// `!`/`$` runs against the focused session, so Esc cancels it here.
-				if (this.ctx.viewSession.isBashRunning) {
-					this.ctx.viewSession.abortBash();
-					return;
-				}
-				if (this.ctx.viewSession.isEvalRunning) {
-					this.ctx.viewSession.abortEval();
-					return;
-				}
 				// Esc never interrupts the focused agent's turn: clear typed text,
 				// else return the view to the main session. Interrupt via empty
 				// steer-flush submit if needed.
@@ -866,7 +857,42 @@ export class InputController {
 				}
 			}
 
-			if (await this.#runInlineExecution(text)) return;
+			// Handle bash command (! for normal, !! for excluded from context)
+			if (text.startsWith("!")) {
+				const isExcluded = text.startsWith("!!");
+				const command = isExcluded ? text.slice(2).trim() : text.slice(1).trim();
+				if (command) {
+					if (this.ctx.session.isBashRunning) {
+						this.ctx.showWarning("A bash command is already running. Press Esc to cancel it first.");
+						this.ctx.editor.setText(text);
+						return;
+					}
+					this.ctx.editor.addToHistory(text);
+					await this.ctx.handleBashCommand(command, isExcluded);
+					this.ctx.isBashMode = false;
+					this.ctx.updateEditorBorderColor();
+					return;
+				}
+			}
+
+			// Handle python command (`$ <code>` for normal, `$$ <code>` for excluded from context).
+			// Shell-style variables such as `$HOME` are normal prose unless a space follows the sigil.
+			const pythonCommand = parsePythonCommandInput(text);
+			if (pythonCommand) {
+				const { code, isExcluded } = pythonCommand;
+				if (code) {
+					if (this.ctx.session.isEvalRunning) {
+						this.ctx.showWarning("A Python execution is already running. Press Esc to cancel it first.");
+						this.ctx.editor.setText(text);
+						return;
+					}
+					this.ctx.editor.addToHistory(text);
+					await this.ctx.handlePythonCommand(code, isExcluded);
+					this.ctx.isPythonMode = false;
+					this.ctx.updateEditorBorderColor();
+					return;
+				}
+			}
 
 			// While loop mode is on, every user-typed prompt becomes the new loop
 			// prompt that auto-resubmits after each yield.
@@ -1032,47 +1058,6 @@ export class InputController {
 		});
 	}
 
-	/**
-	 * Run `!bash` / `$python` editor input against the viewed session. Returns
-	 * true once the text is consumed, false when it is ordinary prose.
-	 */
-	async #runInlineExecution(text: string): Promise<boolean> {
-		// `!` for normal, `!!` to exclude the output from context.
-		if (text.startsWith("!")) {
-			const isExcluded = text.startsWith("!!");
-			const command = isExcluded ? text.slice(2).trim() : text.slice(1).trim();
-			if (command) {
-				if (this.ctx.viewSession.isBashRunning) {
-					this.ctx.showWarning("A bash command is already running. Press Esc to cancel it first.");
-					this.ctx.editor.setText(text);
-					return true;
-				}
-				this.ctx.editor.addToHistory(text);
-				await this.ctx.handleBashCommand(command, isExcluded);
-				this.ctx.isBashMode = false;
-				this.ctx.updateEditorBorderColor();
-				return true;
-			}
-		}
-
-		// `$ <code>` for normal, `$$ <code>` to exclude the output from context.
-		// Shell-style variables such as `$HOME` are prose unless a space follows the sigil.
-		const pythonCommand = parsePythonCommandInput(text);
-		if (pythonCommand?.code) {
-			if (this.ctx.viewSession.isEvalRunning) {
-				this.ctx.showWarning("A Python execution is already running. Press Esc to cancel it first.");
-				this.ctx.editor.setText(text);
-				return true;
-			}
-			this.ctx.editor.addToHistory(text);
-			await this.ctx.handlePythonCommand(pythonCommand.code, pythonCommand.isExcluded);
-			this.ctx.isPythonMode = false;
-			this.ctx.updateEditorBorderColor();
-			return true;
-		}
-		return false;
-	}
-
 	/** Submit editor text to the focused subagent session (chat-only focus policy). */
 	async #submitToFocusedSession(text: string, streamingBehavior: "steer" | "followUp"): Promise<void> {
 		const target = this.ctx.viewSession;
@@ -1088,9 +1073,8 @@ export class InputController {
 			}
 			return;
 		}
-		if (text && (await this.#runInlineExecution(text))) return;
-		if (text?.startsWith("/")) {
-			this.ctx.showStatus("Slash commands run in the main session — press ←← to return first");
+		if (text && (text.startsWith("/") || text.startsWith("!") || parsePythonCommandInput(text))) {
+			this.ctx.showStatus("Commands run in the main session — press ←← to return first");
 			return; // editor text not cleared: Editor does not auto-clear on submit
 		}
 		this.ctx.editor.clearDraft(text);

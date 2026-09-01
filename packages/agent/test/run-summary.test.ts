@@ -639,6 +639,7 @@ describe("regressions: agent loop telemetry/run summary", () => {
 			parameters: type({ value: type("string").optional() }),
 			intent: "omit",
 			concurrency: "exclusive",
+			interruptible: true,
 			execute: async () => {
 				state.firstDone = true;
 				return { content: [{ type: "text", text: "ok" }], details: {} };

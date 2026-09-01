@@ -177,7 +177,7 @@ export declare class MacAppearanceObserver {
 /**
  * Long-lived cross-platform power assertion.
  *
- * macOS uses `IOKit`, Linux holds login1 and desktop ScreenSaver inhibitors,
+ * macOS uses `IOKit`, Linux holds login1 and desktop `ScreenSaver` inhibitors,
  * and Windows holds thread-affine execution state until the handle is stopped
  * or dropped. Other platforms return a no-op handle.
  */

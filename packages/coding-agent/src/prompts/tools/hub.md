@@ -5,7 +5,7 @@ Use `op: "list"` to discover live peers. Default is running+idle plus running/id
 
 Background jobs auto-deliver when they finish. You NEVER need to poll; if `jobs`/`wait` observes a settled job first, that snapshot is the delivery and suppresses duplicate `async-result`.
 
-- **The user is NOT a peer.** `Main` reaches the user ONLY by writing a plain text block — never `send`, which no user can see. (Subagents reach the user by `send` to `Main`, which relays.) Reasoning an answer through does not deliver it either: thinking is not output.
+- **The user is NOT a peer.** `Main` answers the user ONLY in a plain text block. A `send` is addressed to an agent, and the user sees just a 2-line preview of it (3 for a relayed peer message, 12 expanded, each clipped to 100 chars) — enough to notice it happened, never enough to read it. Reasoning an answer through does not deliver it either: thinking is not output.
 - **`send`** (with `to`): fire-and-forget, NEVER blocks. Delivery receipts (`delivered`/`failed`) immediate; `failed` → peer gone, don't retry.
   Sending wakes `idle`/`parked` peers. Answering: lead with answer, NEVER quote, set `replyTo`.
 - **Format**: plain prose ONLY. No JSON status objects. Share paths via `local://`/`artifact://` URLs, not pasted blobs.

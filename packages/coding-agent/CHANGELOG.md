@@ -100,6 +100,7 @@
 - Fixed sampling parameter errors for newer Anthropic models (Opus 4.7+, Sonnet 5+)
 - Fixed trailing assistant text being truncated when a tool call started mid-stream: the smooth-streaming reveal now force-completes at the tool-call boundary instead of leaving un-revealed text to be committed to scrollback ([#10318](https://github.com/can1357/oh-my-pi/issues/10318)).
 - Fixed agents in a `hub` wait loop leaving a user's message unanswered: the tool prompt now separates a user steering message from the pollable wake reasons, and states that only a plain text block reaches the user ([#10437](https://github.com/can1357/oh-my-pi/pull/10437)).
+- Fixed background job results being lost when the job settled during a `hub wait` that returned on an incoming peer message: the result now auto-delivers instead of waiting for a later snapshot to sweep it up ([#10436](https://github.com/can1357/oh-my-pi/pull/10436)).
 
 ## [18.0.11] - 2026-08-29
 

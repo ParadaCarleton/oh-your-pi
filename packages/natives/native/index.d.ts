@@ -177,7 +177,7 @@ export declare class MacAppearanceObserver {
 /**
  * Long-lived cross-platform power assertion.
  *
- * macOS uses `IOKit`, Linux holds login1 and desktop ScreenSaver inhibitors,
+ * macOS uses `IOKit`, Linux holds login1 and desktop `ScreenSaver` inhibitors,
  * and Windows holds thread-affine execution state until the handle is stopped
  * or dropped. Other platforms return a no-op handle.
  */
@@ -572,7 +572,7 @@ export declare function __ompInstallTokioRuntime(): void
  * `packages/natives/native/index.js` (which derives the name from
  * `package.json#version`).
  */
-export declare function __piNativesV18_0_11(): void
+export declare function __piNativesV18_1_1(): void
 
 /**
  * Apply ast-grep rewrite rules to matching files; honors `dryRun` and returns

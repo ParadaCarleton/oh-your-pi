@@ -220,9 +220,8 @@ mod platform {
 
 	impl AssertionInner {
 		pub fn start(what: Option<&str>, display: bool, reason: &str) -> Result<Self> {
-			// The system-level login1 inhibitor is the load-bearing sleep
-			// prevention. Acquire it first and propagate any failure — without
-			// it there is no protection to offer.
+			// The login1 inhibitor is the only real sleep prevention here, so
+			// acquire it first and propagate any failure.
 			let login1_inhibitor = match what {
 				Some(what) => Some(Self::start_login1(what, reason)?),
 				None => None,

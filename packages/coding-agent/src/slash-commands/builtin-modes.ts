@@ -370,7 +370,7 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		inlineHint: "[model]",
 		allowArgs: true,
 		getTuiAutocompleteDescription: runtime => {
-			const model = runtime.ctx.session.model;
+			const model = runtime.ctx.viewSession.model;
 			return model ? `Model: ${model.provider}/${model.id}` : "Model: none selected";
 		},
 		handle: async (command, runtime) => {

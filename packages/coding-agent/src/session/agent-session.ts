@@ -81,7 +81,7 @@ import { resetOpenAICodexHistoryAfterCompaction } from "@oh-my-pi/pi-ai/provider
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { preferredDialect } from "@oh-my-pi/pi-catalog/identity";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
-import { MacOSPowerAssertion } from "@oh-my-pi/pi-natives";
+import { PowerAssertion } from "@oh-my-pi/pi-natives";
 import {
 	$env,
 	escapeXmlText,
@@ -514,7 +514,7 @@ export class AgentSession {
 		return this.#extensionRoots();
 	}
 
-	#powerAssertion: MacOSPowerAssertion | undefined;
+	#powerAssertion: PowerAssertion | undefined;
 
 	readonly configWarnings: string[] = [];
 
@@ -746,7 +746,7 @@ export class AgentSession {
 		const mode = this.settings.get("power.sleepPrevention");
 		if (mode === "off") return;
 		try {
-			this.#powerAssertion = MacOSPowerAssertion.start({
+			this.#powerAssertion = PowerAssertion.start({
 				reason: "Oh My Pi agent session",
 				idle: true,
 				display: mode === "display" || mode === "system",
@@ -754,7 +754,7 @@ export class AgentSession {
 				user: mode === "system",
 			});
 		} catch (error) {
-			logger.warn("Failed to acquire macOS power assertion", { error: String(error) });
+			logger.warn("Failed to acquire power assertion", { error: String(error) });
 		}
 	}
 
@@ -765,7 +765,7 @@ export class AgentSession {
 		try {
 			assertion.stop();
 		} catch (error) {
-			logger.warn("Failed to release macOS power assertion", { error: String(error) });
+			logger.warn("Failed to release power assertion", { error: String(error) });
 		}
 	}
 

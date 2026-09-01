@@ -1391,7 +1391,7 @@ export class CommandController {
 		beforeFlush?: (outcome: CompactionOutcome) => void | Promise<void>,
 		internalGuidance?: string,
 	): Promise<CompactionOutcome> {
-		const entries = this.ctx.sessionManager.getEntries();
+		const entries = this.ctx.viewSession.sessionManager.getEntries();
 		const messageCount = entries.filter(e => e.type === "message").length;
 
 		if (messageCount < 2) {
@@ -1419,7 +1419,7 @@ export class CommandController {
 	async handleShakeCommand(mode: ShakeMode): Promise<void> {
 		let result: ShakeResult;
 		try {
-			result = await this.ctx.session.shake(mode);
+			result = await this.ctx.viewSession.shake(mode);
 		} catch (error) {
 			this.ctx.showError(`Shake failed: ${error instanceof Error ? error.message : String(error)}`);
 			return;
@@ -1511,7 +1511,7 @@ export class CommandController {
 				baseOptions || effectiveMode
 					? { ...baseOptions, ...(effectiveMode ? { mode: effectiveMode } : {}) }
 					: undefined;
-			await this.ctx.session.compact(instructions, options);
+			await this.ctx.viewSession.compact(instructions, options);
 
 			compactingLoader.stop();
 			this.ctx.statusContainer.disposeChildren();

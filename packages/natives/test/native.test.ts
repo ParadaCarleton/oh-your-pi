@@ -1085,26 +1085,23 @@ console.log("ok");
 			assertion?.stop();
 		});
 
-		it.skipIf(process.platform !== "linux" || !Bun.which("systemd-inhibit"))(
-			"registers a login1 inhibitor for the handle's lifetime",
-			() => {
-				const reason = `pi-natives ${crypto.randomUUID()}`;
-				const held = (): boolean =>
-					Bun.spawnSync(["systemd-inhibit", "--list", "--no-pager"]).stdout.toString().includes(reason);
-				let assertion: PowerAssertion;
-				try {
-					assertion = PowerAssertion.start({ reason, idle: true });
-				} catch {
-					return; // No system bus here; the failure vocabulary is covered above.
-				}
-				try {
-					expect(held()).toBe(true);
-				} finally {
-					assertion.stop();
-				}
-				expect(held()).toBe(false);
-			},
-		);
+		const listInhibitors = () => Bun.spawnSync(["systemd-inhibit", "--list", "--no-pager"]);
+		// Listing inhibitors needs the same bus the assertion does, so where the
+		// listing works a failed acquisition is a regression, not a bare host.
+		const systemBusUsable =
+			process.platform === "linux" && Boolean(Bun.which("systemd-inhibit")) && listInhibitors().exitCode === 0;
+
+		it.skipIf(!systemBusUsable)("registers a login1 inhibitor for the handle's lifetime", () => {
+			const reason = `pi-natives ${crypto.randomUUID()}`;
+			const held = (): boolean => listInhibitors().stdout.toString().includes(reason);
+			const assertion = PowerAssertion.start({ reason, idle: true });
+			try {
+				expect(held()).toBe(true);
+			} finally {
+				assertion.stop();
+			}
+			expect(held()).toBe(false);
+		});
 	});
 
 	describe("astMatch", () => {

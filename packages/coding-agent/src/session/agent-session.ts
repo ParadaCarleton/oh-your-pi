@@ -808,6 +808,12 @@ export class AgentSession {
 		if (this.#powerAssertion) return;
 		const options = powerAssertionOptions(this.settings.get("power.sleepPrevention"));
 		if (!options) return;
+		// A missing binding means the loaded addon predates this call site, which no
+		// retry fixes; a thrown acquisition is a transient host failure.
+		if (typeof PowerAssertion?.start !== "function") {
+			logger.error("Power assertion binding missing from the loaded native addon");
+			return;
+		}
 		try {
 			this.#powerAssertion = PowerAssertion.start(options);
 		} catch (error) {

@@ -290,12 +290,12 @@ mod platform {
 			) {
 				Ok(reply) => reply,
 				Err(error) => {
-					// A method error does not invalidate the shared transport,
-					// and dropping it here would orphan every other session's
-					// ScreenSaver cookie (the service releases inhibitors when
-					// the connection closes). Leave the connection in place;
-					// only the connection-acquisition failure above leaves it
-					// unset for the next acquisition to reconnect.
+					// A live transport stays cached: dropping it would orphan every
+					// other session's cookie, which the service releases on close.
+					// A closed one is cached garbage, so let the next call reconnect.
+					if connection.is_closed() {
+						*session_bus = None;
+					}
 					return Err(Error::from_reason(format!("ScreenSaver Inhibit failed: {error}")));
 				},
 			};

@@ -122,9 +122,10 @@ impl JjWorkspace {
 		})
 	}
 
-	/// Count the recorded changes in `@` relative to its merged parent tree.
+	/// Snapshot the working copy, then count `@`'s changes against its parent
+	/// tree.
 	pub fn status_summary(&self) -> Result<StatusSummary> {
-		self.with_current_repo("jj status", |workspace, repo| {
+		self.with_repo(true, "jj status", |workspace, repo| {
 			Box::pin(async move {
 				let Some((before, after)) =
 					working_copy_trees(workspace, repo.as_ref(), "jj status").await?
@@ -145,11 +146,12 @@ impl JjWorkspace {
 		})
 	}
 
-	/// Render `@` versus its merged parents in git porcelain-v1 form.
+	/// Snapshot the working copy, then render `@` versus its merged parents in
+	/// git porcelain-v1 form.
 	pub fn status_porcelain(&self, options: &StatusOptions) -> Result<String> {
 		let pathspecs = options.pathspecs.clone();
 		let nul_terminated = options.nul_terminated;
-		self.with_current_repo("jj status", move |workspace, repo| {
+		self.with_repo(true, "jj status", move |workspace, repo| {
 			Box::pin(async move {
 				let Some((before, after)) =
 					working_copy_trees(workspace, repo.as_ref(), "jj status").await?
@@ -1149,9 +1151,12 @@ mod tests {
 		]);
 		assert_eq!(workspace.working_copy_label().unwrap(), parse_label(&label_raw));
 
-		let summary_raw =
-			run_jj(temp.path(), &["diff", "-r", "@", "--summary", "--ignore-working-copy"]);
-		assert_eq!(workspace.status_summary().unwrap(), parse_summary(&summary_raw));
+		// Read our summary before the reference command, whose own snapshot would
+		// otherwise hand a non-snapshotting implementation the answer for free.
+		std::fs::write(temp.path().join("beta.txt"), "three\n").unwrap();
+		let summary = workspace.status_summary().unwrap();
+		let summary_raw = run_jj(temp.path(), &["diff", "-r", "@", "--summary"]);
+		assert_eq!(summary, parse_summary(&summary_raw));
 
 		let expected_patch = run_jj(temp.path(), &["diff", "--git", "--ignore-working-copy"]);
 		let actual_patch = workspace.diff_text(&[], false).unwrap();

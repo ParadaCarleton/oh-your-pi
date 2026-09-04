@@ -12,6 +12,9 @@
 ### Fixed
 
 - Fixed native version-control cleanup to respect ignore rules and path boundaries while safely handling symlinks, nested repositories, and submodules.
+### Added
+
+- `astMatch` now accepts serialized structured ast-grep rule cores through `ruleConfigs`.
 
 ## [18.1.7] - 2026-09-03
 

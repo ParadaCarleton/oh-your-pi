@@ -70,7 +70,7 @@ async function run(args: TtsrCommandArgs): Promise<void> {
 async function writeTempRule(
 	condition: string,
 	scope: string[],
-	options: { astCondition?: string; agents?: string[] } = {},
+	options: { astCondition?: string | Record<string, unknown>; agents?: string[] } = {},
 ): Promise<string> {
 	// Stable basename "test-rule.md" so buildRuleFromMarkdown derives name
 	// "test-rule" — assertions rely on it. Each call uses a unique parent dir
@@ -79,7 +79,7 @@ async function writeTempRule(
 	fs.mkdirSync(dir, { recursive: true });
 	const tmp = path.join(dir, "test-rule.md");
 	const fm: string[] = [`description: test rule`, `condition: "${condition.replace(/"/g, '\\"')}"`];
-	if (options.astCondition) fm.push(`astCondition: "${options.astCondition.replace(/"/g, '\\"')}"`);
+	if (options.astCondition) fm.push(`astCondition: ${JSON.stringify(options.astCondition)}`);
 	fm.push(`scope: [${scope.map(s => `"${s}"`).join(", ")}]`);
 	if (options.agents) fm.push(`agents: [${options.agents.map(a => `"${a}"`).join(", ")}]`);
 	await Bun.write(tmp, `---\n${fm.join("\n")}\n---\nbody\n`);
@@ -185,6 +185,34 @@ describe("omp ttsr", () => {
 			await run({ action: "test", test });
 			expect(stdout).toContain("Triggered");
 			expect(stdout).toContain("astCondition");
+		});
+
+		it("astCondition accepts structured negative and constraint clauses", async () => {
+			const rule = await writeTempRule("never-match", ["tool:edit(*.ts)"], {
+				astCondition: {
+					rule: {
+						all: [{ pattern: "console.log($A)" }, { not: { pattern: 'console.log("safe")' } }],
+					},
+					constraints: { A: { regex: "^secret$" } },
+				},
+			});
+
+			captureStreams();
+			await run({
+				action: "test",
+				test: {
+					rule,
+					snippet: 'console.log("safe"); console.log(secret);',
+					source: "tool",
+					tool: "edit",
+					filePath: "src/example.ts",
+				},
+			});
+
+			expect(process.exitCode).toBe(0);
+			expect(stdout).toContain("test-rule");
+			expect(stdout).toContain('"not"');
+			expect(stdout).toContain('"constraints"');
 		});
 
 		it("infers tool/edit context for a newly-allowlisted .cs file", async () => {

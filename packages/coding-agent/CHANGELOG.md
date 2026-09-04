@@ -103,6 +103,7 @@
 ### Removed
 
 - Removed the librarian agent.
+- TTSR `astCondition` now accepts structured ast-grep rules, including negative, relational, composite, and metavariable constraint clauses.
 
 ## [18.1.8] - 2026-09-03
 

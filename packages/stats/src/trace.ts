@@ -13,7 +13,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { getSessionsDir, isEnoent } from "@oh-my-pi/pi-utils";
 import { getSessionRollups, getToolCallCountsBySession } from "./db";
-import { extractFolderFromPath, parseAllSessionEntries } from "./parser";
+import { parseAllSessionEntries, readSessionFolder } from "./parser";
 import type {
 	SessionEntry,
 	SessionSummary,
@@ -927,7 +927,7 @@ export async function listSessionSummaries(limit = 100, q?: string): Promise<Ses
 		if (!fold) {
 			fold = {
 				file: rootFile,
-				folder: extractFolderFromPath(rootFile),
+				folder: await readSessionFolder(rootFile),
 				title: null,
 				startedAt: row.startedAt,
 				endedAt: row.endedAt,
@@ -966,7 +966,7 @@ export async function listSessionSummaries(limit = 100, q?: string): Promise<Ses
 		}
 		byRoot.set(root.file, {
 			file: root.file,
-			folder: extractFolderFromPath(root.file),
+			folder: await readSessionFolder(root.file),
 			title: null,
 			startedAt: root.startedAt,
 			endedAt: root.mtimeMs,

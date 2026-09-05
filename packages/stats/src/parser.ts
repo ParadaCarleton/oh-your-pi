@@ -50,9 +50,10 @@ export function classifyAgentType(sessionPath: string): AgentType {
 }
 
 /**
- * Extract folder name from session filename.
- * Session files are named like: --work--pi--/timestamp_uuid.jsonl
- * The folder part uses -- as path separator.
+ * Extract folder name from the legacy `--work--pi--` session directory name.
+ * Lossy: `/work/pi--x` and `/work/pi/x` encode alike, and the home-relative
+ * `-Projects-pi` names {@link computeDefaultSessionDir} writes today pass
+ * through unchanged. Use {@link sessionCwd} where the transcript is at hand.
  */
 export function extractFolderFromPath(sessionPath: string): string {
 	const sessionsDir = getSessionsDir();
@@ -60,6 +61,31 @@ export function extractFolderFromPath(sessionPath: string): string {
 	const projectDir = rel.split(path.sep)[0];
 	// Convert --work--pi-- to /work/pi
 	return projectDir.replace(/^--/, "/").replace(/--/g, "/");
+}
+
+/** Bytes of a transcript that must hold its session header; measured max is 256. */
+const HEADER_SCAN_BYTES = 4096;
+
+/** The working directory a transcript recorded for itself, from its session header. */
+export function sessionCwd(bytes: Uint8Array): string | undefined {
+	let cwd: string | undefined;
+	visitSessionEntriesLenient(bytes.subarray(0, HEADER_SCAN_BYTES), entry => {
+		if (cwd === undefined && entry.type === "session" && typeof entry.cwd === "string" && entry.cwd) cwd = entry.cwd;
+	});
+	return cwd;
+}
+
+/** The folder a transcript belongs to, preferring the cwd it recorded over its encoded path. */
+export async function readSessionFolder(sessionPath: string): Promise<string> {
+	const handle = await fs.open(sessionPath, "r").catch(() => undefined);
+	if (!handle) return extractFolderFromPath(sessionPath);
+	try {
+		const buffer = new Uint8Array(HEADER_SCAN_BYTES);
+		const { bytesRead } = await handle.read(buffer, 0, HEADER_SCAN_BYTES, 0);
+		return sessionCwd(buffer.subarray(0, bytesRead)) ?? extractFolderFromPath(sessionPath);
+	} finally {
+		await handle.close();
+	}
 }
 
 /**
@@ -426,7 +452,7 @@ export async function parseSessionFile(sessionPath: string, fromOffset = 0): Pro
 		throw err;
 	}
 
-	const folder = extractFolderFromPath(sessionPath);
+	const folder = sessionCwd(bytes) ?? extractFolderFromPath(sessionPath);
 	const agentType = classifyAgentType(sessionPath);
 	const stats: MessageStats[] = [];
 	const userStats: UserMessageStats[] = [];

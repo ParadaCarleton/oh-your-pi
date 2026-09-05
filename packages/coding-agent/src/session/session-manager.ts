@@ -2877,6 +2877,16 @@ export class SessionManager {
 
 		const kept = new Set<string>();
 		for (const entry of this.getBranch()) kept.add(entry.id);
+		// Retain the visible ancestry archived roots need when restored.
+		for (const archivedRoot of this.#index.archivedRootIds()) {
+			let entry = this.#index.get(archivedRoot);
+			while (entry?.parentId) {
+				const parent = this.#index.get(entry.parentId);
+				if (!parent || kept.has(parent.id)) break;
+				kept.add(parent.id);
+				entry = parent;
+			}
+		}
 
 		const roots = this.getTree();
 
@@ -2913,20 +2923,23 @@ export class SessionManager {
 			else if (isToolResult(node.entry)) kept.add(id);
 		}
 
-		// Labels and archive records live outside the parent chain: they follow
-		// their target. An archive record is what hides its branch, so deleting it
-		// would silently unhide one — it stays as long as its target exists.
+		const inTree = new Set<string>();
+		for (const node of preOrder) inTree.add(node.entry.id);
+		const targetSurvives = (targetId: string): boolean =>
+			this.#index.has(targetId) && (!inTree.has(targetId) || kept.has(targetId));
+
+		// Labels and archive records follow their target rather than their journal
+		// parent. Keep them only when that target survives this prune, including
+		// targets protected inside archived subtrees.
 		for (const entry of this.#entries) {
-			if (entry.type === "label" && kept.has(entry.targetId)) kept.add(entry.id);
-			if (entry.type === "archive" && this.#index.has(entry.targetId)) kept.add(entry.id);
+			if (entry.type !== "label" && entry.type !== "archive") continue;
+			if (targetSurvives(entry.targetId)) kept.add(entry.id);
+			else kept.delete(entry.id);
 		}
 
 		// Records that are not tree nodes — the session header, the title — carry
 		// no id the tree ever sees, so a verdict was never computed for them and
 		// dropping them would take the session's own metadata with the branches.
-		const inTree = new Set<string>();
-		for (const node of preOrder) inTree.add(node.entry.id);
-
 		return { inTree, kept, preOrder };
 	}
 

@@ -1226,6 +1226,10 @@
 - Added `/unarchive` to bring hidden branches back: `/unarchive` restores them all, `/unarchive <branch id>` restores one, and `/unarchive list` shows what is hidden.
 - Added archiving from the `/tree` selector: `Shift+A` hides the highlighted branch whether or not it is empty, `Alt+R` reveals archived branches in place, and selecting or pressing `Shift+A` on a revealed branch restores it.
 
+### Fixed
+
+- `/prune delete` now preserves the conversation ancestry needed by archived branches and removes labels together with deleted targets.
+
 ## [17.2.14] - 2026-08-11
 
 ### Added

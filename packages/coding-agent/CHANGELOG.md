@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added collapsible `/tree` branches: `Space` folds one visible subtree and `Shift+Tab` focuses the active thread while preserving existing paging keys.
+
 ### Changed
 
 - Muse Code sessions send a compact hashline edit description (~3 KB less per request); all other models keep the full prompt.
@@ -1372,9 +1376,6 @@
 - Fixed parsing of POSIX `$EDITOR` commands that contain quoted arguments or executable paths with spaces.
 - Fixed persisted Agent Hub rows losing the explicit caller model role when a subagent used a model override, preserving role provenance across restarts.
 - Fixed unobserved promise rejections in browser helpers (such as `tab.waitForResponse()`) causing tab workers to hang or crash.
-### Added
-
-- Added collapsible branches to the `/tree` selector: `Space` folds the selected node's subtree behind a `▸` marker with a hidden-entry count, and `Shift+Tab` folds every branch off the current thread down to one row each.
 
 ## [17.2.9] - 2026-08-05
 

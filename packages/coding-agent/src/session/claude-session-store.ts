@@ -114,10 +114,37 @@ async function readRegisteredProjects(root: string): Promise<string[]> {
 	}
 }
 
-function projectCwd(encoded: string, registered: readonly string[]): string {
-	const exact = registered.find(project => project.replaceAll(path.sep, "-") === encoded);
+/** Characters Claude flattens to "-" when it names a project directory. */
+const ENCODED_SEPARATORS = /[/\\._]/g;
+
+const encodeProjectDir = (cwd: string): string => cwd.replace(ENCODED_SEPARATORS, "-");
+
+/**
+ * Directories under `parent` whose encoded names spell `encoded`.
+ * The encoding is lossy, so only the filesystem can say where one path segment
+ * ends and the next begins; stops once `limit` candidates are known.
+ */
+async function probeProjectCwd(parent: string, encoded: string, limit: number): Promise<string[]> {
+	if (encoded === "") return [parent];
+	const found: string[] = [];
+	for (const entry of await fs.readdir(parent, { withFileTypes: true }).catch(() => [])) {
+		if (!entry.isDirectory()) continue;
+		const name = encodeProjectDir(entry.name);
+		const child = path.join(parent, entry.name);
+		if (name === encoded) found.push(child);
+		else if (encoded.startsWith(`${name}-`)) found.push(...(await probeProjectCwd(child, encoded.slice(name.length + 1), limit)));
+		if (found.length >= limit) break;
+	}
+	return found;
+}
+
+/** Recover the working directory a Claude project directory name stands for. */
+async function projectCwd(encoded: string, registered: readonly string[]): Promise<string> {
+	const exact = registered.find(project => encodeProjectDir(project) === encoded);
 	if (exact) return exact;
 	if (!encoded.startsWith("-")) return encoded;
+	const probed = await probeProjectCwd(path.sep, encoded.slice(1), 2);
+	if (probed.length === 1) return probed[0];
 	return encoded.replaceAll("-", path.sep);
 }
 
@@ -131,7 +158,7 @@ async function projectFiles(root: string): Promise<Array<{ file: string; cwd: st
 			if (!project.isDirectory()) continue;
 			const directory = path.join(container, project.name);
 			const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
-			const cwd = projectCwd(project.name, registered);
+			const cwd = await projectCwd(project.name, registered);
 			for (const entry of entries) {
 				if (entry.isFile() && entry.name.endsWith(".jsonl")) {
 					found.push({ file: path.join(directory, entry.name), cwd });

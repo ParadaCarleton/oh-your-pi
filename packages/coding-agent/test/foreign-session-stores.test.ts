@@ -89,6 +89,26 @@ async function createClaudeFixture(): Promise<{ info: ForeignSessionInfo; store:
 }
 
 describe("ClaudeSessionStore", () => {
+	it("recovers a project cwd whose name holds the characters Claude encodes as '-'", async () => {
+		const root = path.join(tempRoot, ".claude");
+		const cwd = path.join(tempRoot, "my-project.dir");
+		await fs.mkdir(cwd, { recursive: true });
+		const id = "33333333-3333-4333-8333-333333333333";
+		// No history.jsonl entry, so the project directory name is the only cwd on offer.
+		await writeJsonl(path.join(root, "projects", cwd.replace(/[/\\._]/g, "-"), `${id}.jsonl`), [
+			{
+				type: "user",
+				uuid: "u",
+				parentUuid: null,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				message: { content: "." },
+			},
+		]);
+
+		const info = (await new ClaudeSessionStore(root).list()).find(item => item.id === id);
+		expect(info?.cwd).toBe(cwd);
+	});
+
 	it("imports an API error as a failed turn a prune can reach", async () => {
 		const root = path.join(tempRoot, ".claude");
 		const cwd = path.join(tempRoot, "overloaded");

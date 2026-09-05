@@ -3,6 +3,10 @@
 ## [Unreleased]
 - Fixed edit and write results to report the formatted bytes actually committed by LSP writethrough.
 
+### Breaking Changes
+
+- Upgraded collaboration sessions to protocol version 4 so guests receive archived branch state.
+
 ### Added
 
 - Added `/prune` to archive conversation branches with no completed assistant reply, with `/prune delete` available for permanent removal.

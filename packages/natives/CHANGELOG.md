@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Added `juliaSyntaxMatches`, an in-memory, lossless Julia CST query backed by Fatou for editor and rule-rewrite integrations.
+
 ## [18.1.9] - 2026-09-04
 
 ### Added

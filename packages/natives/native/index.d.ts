@@ -732,8 +732,8 @@ export interface AstFindResult {
 export declare function astGrep(options: AstFindOptions): Promise<AstFindResult>
 
 /**
- * Match ast-grep patterns or structured rule cores against an in-memory source string; returns a
- * promise resolved on a worker thread.
+ * Match ast-grep patterns or structured rule cores against an in-memory source
+ * string; returns a promise resolved on a worker thread.
  *
  * This is the file-free counterpart to [`ast_grep`]: callers that already hold
  * the source (streaming buffers, generated code, editor contents) avoid a
@@ -743,7 +743,7 @@ export declare function astGrep(options: AstFindOptions): Promise<AstFindResult>
 export declare function astMatch(options: AstMatchOptions): Promise<AstMatchResult>
 
 /**
- * Options for `astMatch`: run ast-grep patterns or structured rules against an in-memory source
+ * Options for `astMatch`: run ast-grep patterns against an in-memory source
  * string instead of files on disk.
  */
 export interface AstMatchOptions {
@@ -751,7 +751,7 @@ export interface AstMatchOptions {
   source: string
   /** Language of `source` (required; e.g. "ts", "tsx", "rust", "python"). */
   lang: string
-  /** Shorthand ast-grep patterns to search for (OR with `ruleConfigs`). */
+  /** Shorthand ast-grep patterns to search for (OR with `rule_configs`). */
   patterns: Array<string>
   /** Serialized ast-grep rule cores to search for (OR with `patterns`). */
   ruleConfigs?: Array<string>
@@ -1958,6 +1958,38 @@ export declare function isoStart(kind: IsoBackendKind | undefined | null, lower:
 
 /** Tear down a previously started backend at `merged`. */
 export declare function isoStop(kind: IsoBackendKind | undefined | null, merged: string): Promise<void>
+
+/** A Fatou CST node and its source location. */
+export interface JuliaSyntaxMatch {
+  /** Stable, caller-facing node kind. */
+  kind: string
+  /** Exact source covered by the node. */
+  text: string
+  /** Start byte offset in the UTF-8 source. */
+  byteStart: number
+  /** End byte offset in the UTF-8 source, exclusive. */
+  byteEnd: number
+  /** One-based start line. */
+  startLine: number
+  /** One-based end line. */
+  endLine: number
+}
+
+/**
+ * Parse an in-memory Julia fragment with Fatou and return selected CST nodes.
+ *
+ * Parsing never touches the filesystem. Unknown kind names are rejected so a
+ * misspelled rule cannot silently stop firing.
+ */
+export declare function juliaSyntaxMatches(source: string, kinds: Array<string>): JuliaSyntaxMatchResult
+
+/** In-memory Fatou parse result for requested Julia CST kinds. */
+export interface JuliaSyntaxMatchResult {
+  /** Matching nodes in source order. */
+  matches: Array<JuliaSyntaxMatch>
+  /** Recoverable parser diagnostics. Fatou still returns a lossless CST. */
+  parseErrors?: Array<string>
+}
 
 /** Event types from Kitty keyboard protocol (flag 2). */
 export declare enum KeyEventType {

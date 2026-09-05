@@ -21,6 +21,7 @@ import {
 	highlightCode,
 	htmlToMarkdown,
 	invalidateFsScanCache,
+	juliaSyntaxMatches,
 	listWorkspace,
 	macOSCheckSpelling,
 	macOSSpellCheckerAvailable,
@@ -1205,6 +1206,41 @@ console.log("ok");
 
 		it("rejects an empty language", async () => {
 			await expect(astMatch({ source: "const a = 1;", lang: "  ", patterns: ["const $A = $B"] })).rejects.toThrow();
+		});
+	});
+
+	describe("juliaSyntaxMatches", () => {
+		it("finds lossless Julia function and control-flow nodes", () => {
+			const source = [
+				"# long form",
+				"function long(x)",
+				'    x && error("bad")',
+				"end",
+				"short(x) = x ? x : zero(x)",
+			].join("\n");
+			const result = juliaSyntaxMatches(source, [
+				"function_definition",
+				"assignment",
+				"binary_expression",
+				"ternary_expression",
+			]);
+
+			expect(result.parseErrors).toBeUndefined();
+			expect(result.matches.map(match => match.kind)).toContain("function_definition");
+			expect(result.matches.map(match => match.text)).toContain('x && error("bad")');
+			expect(result.matches.map(match => match.text)).toContain("x ? x : zero(x)");
+		});
+
+		it("rejects unknown node kinds instead of silently missing", () => {
+			expect(() => juliaSyntaxMatches("f(x) = x", ["function_defintion"])).toThrow("unsupported Julia syntax kind");
+		});
+
+		it("finds Julia loops and index expressions", () => {
+			const source = ["for i in eachindex(xs)", "    consume(i, xs[i])", "end"].join("\n");
+			const result = juliaSyntaxMatches(source, ["for_expression", "index_expression"]);
+
+			expect(result.matches.map(match => match.kind)).toEqual(["for_expression", "index_expression"]);
+			expect(result.matches[1]?.text).toBe("xs[i]");
 		});
 	});
 });

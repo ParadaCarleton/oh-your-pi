@@ -351,7 +351,6 @@ class TreeList implements Component {
 		return result;
 	}
 
-
 	#applyFilter(): void {
 		// Update lastSelectedId only when we have a valid selection (non-empty list)
 		// This preserves the selection when switching through empty filter results

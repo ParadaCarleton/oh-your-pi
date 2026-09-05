@@ -219,6 +219,7 @@ pi-walker = { path = "crates/pi-walker" }
 pi-vcs = { path = "crates/pi-vcs" }
 brush-core = { path = "crates/vendor/brush-core" }
 pi-builtins = { path = "crates/pi-builtins" }
+fatou-parser = "0.6.0"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Async Runtime & Concurrency

@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { runGcCommand } from "@oh-my-pi/pi-coding-agent/cli/gc-cli";
 import type { SessionHeader } from "@oh-my-pi/pi-coding-agent/session/session-entries";
+import * as sessionLiveness from "@oh-my-pi/pi-coding-agent/session/session-liveness";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { getSessionsDir } from "@oh-my-pi/pi-utils";
 import { holdFileOpen } from "../helpers/open-file-holder";
@@ -103,9 +104,7 @@ describe("omp gc empty-session pruning", () => {
 			},
 		]);
 		expect(await Bun.file(file).text()).toBe(before);
-		expect(stdout.split("\n")[1]).toBe(
-			"prune: would archive 1 of 1 dead session (1 unanswered, 0 assistant text characters)",
-		);
+		expect(stdout.split("\n")[1]).toBe("prune: would archive 1 of 1 dead session (1 unanswered)");
 	});
 
 	test("archive apply moves the session and its artifacts together", async () => {
@@ -127,9 +126,7 @@ describe("omp gc empty-session pruning", () => {
 			"question artifact",
 		);
 		expect(await Bun.file(artifact).exists()).toBe(false);
-		expect(stdout.split("\n")[1]).toBe(
-			"prune: archived 1 of 1 dead session (1 unanswered, 0 assistant text characters)",
-		);
+		expect(stdout.split("\n")[1]).toBe("prune: archived 1 of 1 dead session (1 unanswered)");
 	});
 
 	test("delete apply unlinks the session and its artifacts", async () => {
@@ -146,9 +143,33 @@ describe("omp gc empty-session pruning", () => {
 		expect(result.pruneEmptySessions?.deleted).toBe(1);
 		expect(await Bun.file(file).exists()).toBe(false);
 		expect(await Bun.file(artifactsPath(file)).exists()).toBe(false);
-		expect(stdout.split("\n")[1]).toBe(
-			"prune: deleted 1 of 1 dead session (1 unanswered, 0 assistant text characters)",
-		);
+		expect(stdout.split("\n")[1]).toBe("prune: deleted 1 of 1 dead session (1 unanswered)");
+	});
+
+	test("refuses irreversible deletion when liveness checks degrade", async () => {
+		const agentDir = path.join(root, "agent");
+		const file = await writeSession(agentDir, "degraded", session => {
+			session.appendMessage(userMsg("hello?"));
+		});
+		const inspect = spyOn(sessionLiveness, "inspectSessionLiveness").mockResolvedValue({
+			path: file,
+			live: false,
+			signals: [],
+			holders: [],
+			secondsSinceWrite: 3600,
+			degraded: ["open-handle check unavailable"],
+		});
+		try {
+			const result = await runGcCommand({ flags: { agentDir, pruneEmptySessions: "delete", apply: true } });
+
+			expect(result.pruneEmptySessions?.deleted).toBe(0);
+			expect(result.pruneEmptySessions?.skippedActive).toBe(1);
+			expect(result.pruneEmptySessions?.candidates).toEqual([]);
+			expect(await Bun.file(file).exists()).toBe(true);
+			expect(stdout).toContain("liveness checks degraded; refusing irreversible deletion");
+		} finally {
+			inspect.mockRestore();
+		}
 	});
 
 	test("a real assistant reply is never a candidate", async () => {

@@ -821,6 +821,37 @@ describe("pruneEmptyBranches", () => {
 		expect(ids).toContain(idAsst);
 		expect(ids).not.toContain(idAbandoned);
 	});
+
+	it("preserves the ancestors needed to restore an archived branch", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idAsst = session.appendMessage(assistantMsg("answer"));
+		session.branch(idRoot);
+		const idAncestor = session.appendMessage(userMsg("abandoned ancestor"));
+		const idArchived = session.appendMessage(userMsg("archived descendant"));
+		session.branch(idAsst);
+		await session.archiveBranch(idArchived);
+
+		expect(await session.pruneEmptyBranches()).toBe(0);
+		expect(await session.restoreArchived(idArchived)).toBe(1);
+		expect(session.getBranch(idArchived).map(entry => entry.id)).toEqual([idRoot, idAncestor, idArchived]);
+	});
+
+	it("removes a label on the active path when its target is pruned", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idAsst = session.appendMessage(assistantMsg("answer"));
+		session.branch(idRoot);
+		const idAbandoned = session.appendMessage(userMsg("abandoned"));
+		session.branch(idAsst);
+		const labelId = session.appendLabelChange(idAbandoned, "Pools of Stale Metadata");
+
+		expect(await session.pruneEmptyBranches()).toBe(2);
+		const entries = session.getEntries();
+		expect(entries.map(entry => entry.id)).not.toContain(idAbandoned);
+		expect(entries.map(entry => entry.id)).not.toContain(labelId);
+		expect(JSON.stringify(entries)).not.toContain("Pools of Stale Metadata");
+	});
 });
 
 describe("archiveEmptyBranches", () => {

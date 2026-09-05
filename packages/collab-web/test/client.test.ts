@@ -105,7 +105,11 @@ describe("GuestClient frame apply", () => {
 			parentId: root.id,
 		};
 		const archived = archiveEntry("archive-hidden", visibleReply.id, hiddenPrompt.id, true);
-		const client = liveClient([root, hiddenPrompt, hiddenReply, visibleReply, archived]);
+		const client = new GuestClient(LINK, "tester");
+		client.applyFrameForTest(welcomeFrame(5));
+		client.applyFrameForTest(snapshotChunk([root, hiddenPrompt, hiddenReply], false));
+		expect(client.getSnapshot().entries).toEqual([]);
+		client.applyFrameForTest(snapshotChunk([visibleReply, archived]));
 
 		expect(client.getSnapshot().entries.map(entry => entry.id)).toEqual([root.id, visibleReply.id]);
 
@@ -139,7 +143,7 @@ describe("GuestClient frame apply", () => {
 			vi.advanceTimersByTime(29_999);
 			expect(client.getSnapshot().phase).toBe("connecting");
 			client.applyFrameForTest(snapshotChunk([firstEntry], false));
-			expect(client.getSnapshot().entries).toEqual([firstEntry]);
+			expect(client.getSnapshot().entries).toEqual([]);
 			expect(client.getSnapshot().phase).toBe("connecting");
 
 			vi.advanceTimersByTime(29_999);

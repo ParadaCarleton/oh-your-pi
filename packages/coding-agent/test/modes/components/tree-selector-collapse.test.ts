@@ -7,7 +7,6 @@ import type { SessionTreeNode } from "@oh-my-pi/pi-coding-agent/session/session-
 const TAB = "\t";
 const SHIFT_TAB = "\x1b[Z";
 const UP = "\x1b[A";
-const DOWN = "\x1b[B";
 const LEFT = "\x1b[D";
 const RIGHT = "\x1b[C";
 
@@ -20,6 +19,19 @@ function assistantNode(id: string, parentId: string | null, text: string): Sessi
 	} as AgentMessage;
 	return {
 		entry: { type: "message", id, parentId, timestamp: "2026-01-01T00:00:00.000Z", message },
+		children: [],
+	};
+}
+
+function modelNode(id: string, parentId: string | null): SessionTreeNode {
+	return {
+		entry: {
+			type: "model_change",
+			id,
+			parentId,
+			timestamp: "2026-01-01T00:00:00.000Z",
+			model: "test/model",
+		},
 		children: [],
 	};
 }
@@ -162,6 +174,70 @@ describe("tree selector collapse", () => {
 		expect(list.isCollapsed("b1")).toBe(true);
 	});
 
+	it("folds an off-thread branch at its first visible row", () => {
+		const root = assistantNode("root", null, "common parent");
+		const active = link(root, assistantNode("active", "root", "active branch"));
+		const hiddenHead = link(root, modelNode("hidden-head", "root"));
+		const visibleHead = link(hiddenHead, assistantNode("visible-head", "hidden-head", "visible branch head"));
+		link(visibleHead, assistantNode("visible-tail", "visible-head", "visible branch tail"));
+		const selector = new TreeSelectorComponent(
+			[root],
+			active.entry.id,
+			40,
+			() => {},
+			() => {},
+		);
+		const list = selector.getTreeList();
+
+		selector.handleInput(SHIFT_TAB);
+
+		expect(list.getVisibleEntryIds()).toEqual(["root", "active", "visible-head"]);
+		expect(list.isCollapsed("visible-head")).toBe(true);
+		expect(list.isCollapsed("hidden-head")).toBe(false);
+	});
+
+	it("keeps manual folds while activating focused-thread folds", () => {
+		const { roots } = fixture();
+		const b1 = roots[0].children[1];
+		link(b1, assistantNode("b2", "b1", "branch B deep"));
+		const selector = new TreeSelectorComponent(
+			roots,
+			"a1",
+			40,
+			() => {},
+			() => {},
+		);
+		const list = selector.getTreeList();
+
+		selector.handleInput(TAB);
+		selector.handleInput(SHIFT_TAB);
+
+		expect(list.isCollapsed("a1")).toBe(true);
+		expect(list.isCollapsed("b1")).toBe(true);
+		expect(list.getVisibleEntryIds()).toEqual(["root", "a1", "b1"]);
+	});
+
+	it("counts only descendants visible in the current projection", () => {
+		const root = assistantNode("root", null, "common parent");
+		const hidden = link(root, modelNode("hidden", "root"));
+		link(hidden, assistantNode("visible", "hidden", "visible descendant"));
+		const selector = new TreeSelectorComponent(
+			[root],
+			"root",
+			40,
+			() => {},
+			() => {},
+		);
+
+		selector.handleInput(TAB);
+
+		const row = selector
+			.render(120)
+			.map(line => Bun.stripANSI(line))
+			.find(line => line.includes("common parent"));
+		expect(row).toContain("(+1)");
+	});
+
 	it("collapses on space, but types a space into an active search instead", () => {
 		const selector = selectorAt("a1");
 		const list = selector.getTreeList();
@@ -176,68 +252,23 @@ describe("tree selector collapse", () => {
 		expect(list.isCollapsed(list.getSelectedNode()?.entry.id ?? "")).toBe(false);
 	});
 
-	it("climbs the parent chain, not the rows above the cursor", () => {
-		// root ─┬─ a1 ── a2 ─┬─ a3      the active branch, drawn first
-		//       │            └─ a2b
-		//       └─ b1
-		const root = assistantNode("root", null, "common parent");
-		const a1 = link(root, assistantNode("a1", "root", "branch A head"));
-		const a2 = link(a1, assistantNode("a2", "a1", "branch A middle"));
-		link(a2, assistantNode("a3", "a2", "branch A tail"));
-		link(a2, assistantNode("a2b", "a2", "branch A sibling"));
-		link(root, assistantNode("b1", "root", "branch B"));
+	it("preserves Left and Right as page navigation", () => {
+		const root = assistantNode("n0", null, "entry 0");
+		let tip = root;
+		for (let i = 1; i < 12; i++) tip = link(tip, assistantNode(`n${i}`, tip.entry.id, `entry ${i}`));
 		const selector = new TreeSelectorComponent(
 			[root],
-			"a3",
-			40,
+			"n11",
+			10,
 			() => {},
 			() => {},
 		);
 		const list = selector.getTreeList();
-		expect(list.getVisibleEntryIds()).toEqual(["root", "a1", "a2", "a3", "a2b", "b1"]);
-
-		while (list.getSelectedNode()?.entry.id !== "b1") selector.handleInput(DOWN);
-		// a2 forks and sits above b1 on screen, but on another thread entirely —
-		// b1's own fork is the root it hangs off.
-		selector.handleInput(LEFT);
-		expect(list.getSelectedNode()?.entry.id).toBe("root");
-
-		// Descending follows the branch drawn first, so it lands inside thread A
-		// rather than on b1.
-		selector.handleInput(RIGHT);
-		expect(list.getSelectedNode()?.entry.id).toBe("a2");
 
 		selector.handleInput(LEFT);
-		expect(list.getSelectedNode()?.entry.id).toBe("root");
-	});
-
-	it("runs to the end of the chain when no fork is left that way", () => {
-		const selector = selectorAt("a3"); // root ─┬─ a1 ── a2 ── a3 / └─ b1
-		const list = selector.getTreeList();
-
-		// Nothing forks between a3 and the root but the root itself.
-		selector.handleInput(LEFT);
-		expect(list.getSelectedNode()?.entry.id).toBe("root");
-		selector.handleInput(LEFT);
-		expect(list.getSelectedNode()?.entry.id).toBe("root");
-
-		// No fork below the root on thread A, so the cursor rides the chain to its
-		// deepest row instead of stopping short.
+		expect(list.getSelectedNode()?.entry.id).toBe("n6");
 		selector.handleInput(RIGHT);
-		expect(list.getSelectedNode()?.entry.id).toBe("a3");
-		selector.handleInput(RIGHT);
-		expect(list.getSelectedNode()?.entry.id).toBe("a3");
-	});
-
-	it("keeps a collapsed fork reachable as a branch point", () => {
-		const selector = selectorAt("a3");
-		const list = selector.getTreeList();
-		selector.handleInput(LEFT); // cursor on root
-		selector.handleInput(TAB); // fold the whole session behind it
-		expect(list.getVisibleEntryIds()).toEqual(["root"]);
-
-		selector.handleInput(RIGHT);
-		expect(list.getSelectedNode()?.entry.id).toBe("root");
+		expect(list.getSelectedNode()?.entry.id).toBe("n11");
 	});
 
 	it("moves the cursor to the collapsed ancestor when the selection is hidden", () => {

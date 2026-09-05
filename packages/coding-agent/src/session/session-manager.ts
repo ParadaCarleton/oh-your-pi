@@ -3051,7 +3051,22 @@ export class SessionManager {
 		if (branchPath.length === 0) throw new Error(`Entry ${leafId} not found`);
 
 		// Drop label entries from the path; recreate them fresh from the resolved map.
-		const entriesToKeep = branchPath.filter(entry => entry.type !== "label");
+		// Archive records whose targets are outside the selected path are stale in
+		// the branched session and must be bypassed as well.
+		const branchIds = new Set(branchPath.map(entry => entry.id));
+		const retainedPath = branchPath.filter(
+			entry => entry.type !== "label" && (entry.type !== "archive" || branchIds.has(entry.targetId)),
+		);
+		const retainedIds = new Set(retainedPath.map(entry => entry.id));
+		const parentById = new Map(branchPath.map(entry => [entry.id, entry.parentId]));
+		const nearestRetainedParent = (parentId: string | null): string | null => {
+			while (parentId && !retainedIds.has(parentId)) parentId = parentById.get(parentId) ?? null;
+			return parentId;
+		};
+		const entriesToKeep = retainedPath.map(entry => {
+			const parentId = nearestRetainedParent(entry.parentId);
+			return parentId === entry.parentId ? entry : { ...entry, parentId };
+		});
 		const keptIds = new Set(entriesToKeep.map(entry => entry.id));
 		const labelsToCarry: Array<{ targetId: string; label: string }> = [];
 		for (const [targetId, label] of this.#index.labelsInEffect()) {

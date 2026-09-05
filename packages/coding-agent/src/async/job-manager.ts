@@ -469,7 +469,7 @@ export class AsyncJobManager {
 	 * the last suppression still delivers the result exactly once.
 	 */
 	#requeueSettledDelivery(jobId: string): void {
-		if (this.isDeliverySuppressed(jobId)) return;
+		if (this.isDeliverySuppressed(jobId) || this.#consumedJobResults.has(jobId)) return;
 		const job = this.#jobs.get(jobId);
 		if (!job || (job.status !== "completed" && job.status !== "failed")) return;
 		const queued =

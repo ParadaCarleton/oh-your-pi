@@ -4,7 +4,12 @@
 
 import { Command, Flags } from "@oh-my-pi/pi-utils/cli";
 import { gcHelp as commandHelp } from "../cli/command-help";
-import { collectGcErrors, type GcCommandArgs, runGcCommand } from "../cli/gc-cli";
+import { collectGcErrors, type GcCommandArgs, type GcCommandFlags, runGcCommand } from "../cli/gc-cli";
+
+function parsePruneMode(value: string | undefined): GcCommandFlags["pruneEmptySessions"] {
+	if (value === undefined || value === "archive" || value === "delete") return value;
+	throw new Error(`Unsupported prune mode: ${value}`);
+}
 
 export default class Gc extends Command {
 	static description = commandHelp.description;
@@ -38,7 +43,7 @@ export default class Gc extends Command {
 				blobs: flags.blobs,
 				archive: flags.archive,
 				mergeSessions: flags["merge-sessions"],
-				pruneEmptySessions: flags.prune as "archive" | "delete" | undefined,
+				pruneEmptySessions: parsePruneMode(flags.prune),
 				wal: flags.wal,
 				coldArchiveAfterDays: flags["cold-archive-after-days"],
 				retainNewestGlobal: flags["retain-newest-global"],

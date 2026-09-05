@@ -20,12 +20,8 @@ import { BLOB_HASH_RE } from "../session/blob-store";
 import { inspectSessionEmptiness, type SessionPruneReason, sessionPruneReason } from "../session/session-emptiness";
 import type { FileEntry, SessionHeader } from "../session/session-entries";
 import { listSessionsReadOnly, type SessionInfo, type SessionStatus } from "../session/session-listing";
-import {
-	inspectSessionLiveness,
-	type LivenessHolder,
-	type LivenessSignal,
-	type SessionLiveness,
-} from "../session/session-liveness";
+import type { LivenessHolder, LivenessSignal, SessionLiveness } from "../session/session-liveness";
+import * as sessionLiveness from "../session/session-liveness";
 import { loadEntriesFromFile } from "../session/session-loader";
 import { planSessionMerge, type SessionMergeConflict, type SessionMergePlan } from "../session/session-merge";
 import { resolveManagedSessionRoot } from "../session/session-paths";
@@ -177,6 +173,7 @@ export interface EmptySessionGcSkippedFile {
 	secondsSinceWrite: number | undefined;
 	signals: LivenessSignal[];
 	holders: LivenessHolder[];
+	reason?: string;
 }
 
 export interface EmptySessionGcResult {
@@ -359,7 +356,7 @@ function errorMessage(error: unknown): string {
 }
 
 async function inspectGcLiveness(file: string, degraded: Set<string>): Promise<SessionLiveness> {
-	const liveness = await inspectSessionLiveness(file);
+	const liveness = await sessionLiveness.inspectSessionLiveness(file);
 	for (const reason of liveness.degraded) degraded.add(reason);
 	return liveness;
 }
@@ -2024,6 +2021,17 @@ async function runEmptySessionGc(
 				});
 				continue;
 			}
+			if (mode === "delete" && liveness.degraded.length > 0) {
+				result.skippedActive++;
+				result.skipped.push({
+					path: file,
+					secondsSinceWrite: liveness.secondsSinceWrite,
+					signals: liveness.signals,
+					holders: liveness.holders,
+					reason: "liveness checks degraded; refusing irreversible deletion",
+				});
+				continue;
+			}
 			const stat = await fs.stat(file);
 
 			const entries = await loadEntriesFromFile(file, storage);
@@ -2432,7 +2440,6 @@ function renderText(result: GcResult, options: ResolvedGcOptions): string {
 		const mode = options.pruneEmptySessions;
 		const pastTense = mode === "archive" ? "archived" : "deleted";
 		const affected = mode === "archive" ? empty.archived : empty.deleted;
-		const assistantTextChars = empty.candidates.reduce((sum, candidate) => sum + candidate.assistantTextChars, 0);
 		const unasked = empty.candidates.filter(candidate => candidate.reason === "no-prompt").length;
 		const unanswered = empty.candidates.length - unasked;
 		const summary = result.apply
@@ -2444,7 +2451,6 @@ function renderText(result: GcResult, options: ResolvedGcOptions): string {
 		const breakdown = [
 			unanswered > 0 ? `${unanswered} unanswered` : undefined,
 			unasked > 0 ? `${unasked} nobody asked` : undefined,
-			`${assistantTextChars} assistant text ${pluralize("character", assistantTextChars)}`,
 		].filter(part => part !== undefined);
 		lines.push(`${summary} (${breakdown.join(", ")})`);
 		// Silent on a clean store: an operator running this weekly should see a
@@ -2454,9 +2460,8 @@ function renderText(result: GcResult, options: ResolvedGcOptions): string {
 			lines.push(result.apply ? `prune: removed ${empty.removedDirs} of ${dirs}` : `prune: would remove ${dirs}`);
 		}
 		for (const skipped of empty.skipped) {
-			lines.push(
-				`prune skipped: ${shortenPath(skipped.path)} ${formatLivenessReason(skipped.signals, skipped.holders)}`,
-			);
+			const reason = skipped.reason ?? formatLivenessReason(skipped.signals, skipped.holders);
+			lines.push(`prune skipped: ${shortenPath(skipped.path)} ${reason}`);
 		}
 		if (empty.errors.length > 0) lines.push(`prune errors: ${empty.errors.length}`);
 	}

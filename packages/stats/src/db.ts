@@ -127,6 +127,9 @@ const TOOL_CALLS_BACKFILL_KEY = "tool_calls_v1";
 // reach the inclusive 200K tier. A one-time full re-parse repairs them through
 // the cost-refreshing UPSERT in `insertMessageStats`.
 const COST_REINGEST_BACKFILL_KEY = "messages_cost_reingest_v1";
+// Folders were derived from the encoded session directory name, which cannot be
+// decoded back into a path. A full re-parse takes each one from its transcript.
+const RECORDED_FOLDER_BACKFILL_KEY = "messages_recorded_folder_v1";
 function shouldResetBackfill(value: string | undefined): boolean {
 	return value !== BACKFILL_COMPLETE && value !== BACKFILL_PENDING;
 }
@@ -330,6 +333,7 @@ export async function initDb(): Promise<Database> {
 	backfillUserMessages(db);
 	backfillToolCalls(db);
 	backfillReingestCosts(db);
+	backfillRecordedFolders(db);
 	repairUserMessageLinks(db);
 	backfillPriorityPremiumRequests(db);
 	backfillAgentType(db);
@@ -1364,6 +1368,25 @@ function backfillReingestCosts(database: Database): void {
 	database
 		.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)")
 		.run(COST_REINGEST_BACKFILL_KEY, BACKFILL_PENDING);
+}
+
+/**
+ * One-shot offset reset so every `folder` is re-derived from the cwd its
+ * transcript records. Rows ingested earlier took the folder from the session
+ * directory name, which holds the cwd with its separators flattened to "-" and
+ * so cannot be decoded back. Same sentinel protocol as
+ * {@link backfillReingestCosts}.
+ */
+function backfillRecordedFolders(database: Database): void {
+	const row = database.prepare("SELECT value FROM meta WHERE key = ?").get(RECORDED_FOLDER_BACKFILL_KEY) as
+		| { value: string }
+		| undefined;
+	if (!shouldResetBackfill(row?.value)) return;
+
+	database.run("DELETE FROM file_offsets");
+	database
+		.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)")
+		.run(RECORDED_FOLDER_BACKFILL_KEY, BACKFILL_PENDING);
 }
 
 /**

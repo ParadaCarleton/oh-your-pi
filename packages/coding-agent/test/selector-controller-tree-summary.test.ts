@@ -69,6 +69,7 @@ function createHarness(summaryChoice = "No summary"): TreeSummaryHarness {
 		sessionManager: {
 			getTree: () => [root],
 			getLeafId: () => null,
+			getArchivedRootId: () => undefined,
 			appendLabelChange: vi.fn(),
 		},
 		ui: {
@@ -99,6 +100,7 @@ function createHarness(summaryChoice = "No summary"): TreeSummaryHarness {
 		reloadTodos: vi.fn(async () => {}),
 		session: {
 			navigateTree,
+			restoreArchived: vi.fn(async () => 0),
 			abortBranchSummary: vi.fn(),
 		},
 	} as unknown as InteractiveModeContext;

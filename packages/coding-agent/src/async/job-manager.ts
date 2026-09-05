@@ -255,7 +255,7 @@ export class AsyncJobManager {
 	readonly #deliveries: AsyncJobDelivery[] = [];
 	readonly #inFlightDeliveries: AsyncJobDelivery[] = [];
 	readonly #suppressedDeliveries = new Set<string>();
-	readonly #watchedJobs = new Set<string>();
+	readonly #watchedJobs = new Map<string, number>();
 	readonly #consumedJobResults = new Set<string>();
 	readonly #evictionTimers = new Map<string, NodeJS.Timeout>();
 	readonly #pollEscalation = new Map<string | undefined, PollEscalationState>();
@@ -465,7 +465,7 @@ export class AsyncJobManager {
 	watchJobs(jobIds: string[]): number {
 		const uniqueJobIds = Array.from(new Set(jobIds.map(id => id.trim()).filter(id => id.length > 0)));
 		for (const jobId of uniqueJobIds) {
-			this.#watchedJobs.add(jobId);
+			this.#watchedJobs.set(jobId, (this.#watchedJobs.get(jobId) ?? 0) + 1);
 		}
 		this.#notifyDeliveryQueueChanged();
 		return uniqueJobIds.length;
@@ -475,7 +475,13 @@ export class AsyncJobManager {
 		const uniqueJobIds = Array.from(new Set(jobIds.map(id => id.trim()).filter(id => id.length > 0)));
 		let removed = 0;
 		for (const jobId of uniqueJobIds) {
-			if (!this.#watchedJobs.delete(jobId)) continue;
+			const watchCount = this.#watchedJobs.get(jobId);
+			if (watchCount === undefined) continue;
+			if (watchCount > 1) {
+				this.#watchedJobs.set(jobId, watchCount - 1);
+			} else {
+				this.#watchedJobs.delete(jobId);
+			}
 			removed += 1;
 			this.#requeueSettledDelivery(jobId);
 		}

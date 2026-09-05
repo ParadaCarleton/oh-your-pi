@@ -845,6 +845,7 @@
 - Fixed frame skips while streaming long markdown Write previews ([#10955](https://github.com/can1357/oh-my-pi/issues/10955)).
 - LiteLLM discovery no longer caches an empty catalog after a timed-out run: a rich-metadata timeout now falls back to `/v1/models`, and a discovery failure with no prior catalog leaves the cache untouched so the next launch retries immediately instead of hiding discovery-only models ([#10964](https://github.com/can1357/oh-my-pi/issues/10964)).
 - Searching `free` in the model picker now finds every zero-cost model, not just the ones with `free` in their id.
+- Fixed background job results being lost or delivered twice when overlapping foreground waits watched the same job ([#10436](https://github.com/can1357/oh-my-pi/pull/10436)).
 
 ## [18.1.11] - 2026-09-05
 
@@ -1165,7 +1166,6 @@
 - Fixed an issue where custom model overrides were lost during configuration updates
 - Fixed "Please use nerdfont" notification incorrectly persisting after theme configuration
 - Fixed sampling parameter errors for newer Anthropic models (Opus 4.7+, Sonnet 5+)
-- Fixed background job results being lost when the job settled during a `hub wait` that returned on an incoming peer message: the result now auto-delivers instead of waiting for a later snapshot to sweep it up ([#10436](https://github.com/can1357/oh-my-pi/pull/10436)).
 
 ## [18.0.11] - 2026-08-29
 

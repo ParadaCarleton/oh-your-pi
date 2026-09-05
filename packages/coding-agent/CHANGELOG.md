@@ -77,6 +77,10 @@
 
 - TTSR `astCondition` now accepts structured ast-grep rules, including negative, relational, composite, and metavariable constraint clauses.
 
+### Fixed
+
+- Preserved hyphenated utility identifiers in structured TTSR AST conditions.
+
 ## [18.1.8] - 2026-09-03
 
 ### Fixed

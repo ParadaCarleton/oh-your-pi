@@ -6,6 +6,7 @@ import { getResolvedThemeColors, getThemeExportColors } from "../../modes/theme/
 import type { SessionEntry, SessionHeader } from "../../session/session-entries";
 import { loadEntriesFromFile } from "../../session/session-loader";
 import { SessionManager } from "../../session/session-manager";
+import { isTaskToolDetails } from "../../task/types";
 import type { ExportThemeNames } from "./args";
 import templateCssPath from "./template.css" with { type: "file" };
 import templateHtmlPath from "./template.html" with { type: "file" };
@@ -244,6 +245,18 @@ export function buildSessionData(
 	};
 }
 
+function referencedSubagentIds(entries: SessionEntry[]): Set<string> {
+	const ids = new Set<string>();
+	for (const entry of entries) {
+		if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== "task")
+			continue;
+		if (!isTaskToolDetails(entry.message.details)) continue;
+		for (const result of entry.message.details.results) ids.add(result.id);
+		for (const progress of entry.message.details.progress ?? []) ids.add(progress.id);
+	}
+	return ids;
+}
+
 /**
  * Collect subagent session transcripts stored next to a session file.
  *
@@ -254,11 +267,17 @@ export function buildSessionData(
  */
 export async function collectSubSessions(
 	sessionFile: string,
-	options?: { includeArchived?: boolean },
+	options?: { includeArchived?: boolean; referencedAgentIds?: ReadonlySet<string> },
 ): Promise<Record<string, SubSession>> {
 	const result: Record<string, SubSession> = {};
 	if (!sessionFile.endsWith(".jsonl")) return result;
-	await collectSubSessionsFromDir(sessionFile.slice(0, -6), null, result, options?.includeArchived === true);
+	await collectSubSessionsFromDir(
+		sessionFile.slice(0, -6),
+		null,
+		result,
+		options?.includeArchived === true,
+		options?.referencedAgentIds,
+	);
 	return result;
 }
 
@@ -267,6 +286,7 @@ async function collectSubSessionsFromDir(
 	parentKey: string | null,
 	out: Record<string, SubSession>,
 	includeArchived: boolean,
+	referencedAgentIds: ReadonlySet<string> | undefined,
 ): Promise<void> {
 	let names: string[];
 	try {
@@ -278,6 +298,7 @@ async function collectSubSessionsFromDir(
 	for (const name of names) {
 		if (!name.endsWith(".jsonl") || name.includes(".bak")) continue;
 		const agentId = name.slice(0, -6);
+		if (referencedAgentIds && !referencedAgentIds.has(agentId)) continue;
 		const key = parentKey ? `${parentKey}/${agentId}` : agentId;
 		const fileEntries = await loadEntriesFromFile(path.join(dir, name));
 		// Empty/corrupt files (no valid session header) load as [] — skip silently.
@@ -292,7 +313,8 @@ async function collectSubSessionsFromDir(
 				await subSession.close();
 			}
 		}
-		await collectSubSessionsFromDir(path.join(dir, agentId), key, out, includeArchived);
+		const childAgentIds = referencedAgentIds ? referencedSubagentIds(out[key]?.entries ?? []) : undefined;
+		await collectSubSessionsFromDir(path.join(dir, agentId), key, out, includeArchived, childAgentIds);
 	}
 }
 
@@ -326,7 +348,10 @@ export async function exportSessionToHtml(
 
 	const sessionData = buildSessionData(sm, state, opts);
 	if (opts.includeSubSessions !== false) {
-		const subSessions = await collectSubSessions(sessionFile, { includeArchived: opts.includeArchived });
+		const subSessions = await collectSubSessions(sessionFile, {
+			includeArchived: opts.includeArchived,
+			referencedAgentIds: referencedSubagentIds(sessionData.entries),
+		});
 		if (Object.keys(subSessions).length > 0) sessionData.subSessions = subSessions;
 	}
 
@@ -352,7 +377,10 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 
 	const sessionData = buildSessionData(sm, undefined, opts);
 	if (opts.includeSubSessions !== false) {
-		const subSessions = await collectSubSessions(inputPath, { includeArchived: opts.includeArchived });
+		const subSessions = await collectSubSessions(inputPath, {
+			includeArchived: opts.includeArchived,
+			referencedAgentIds: referencedSubagentIds(sessionData.entries),
+		});
 		if (Object.keys(subSessions).length > 0) sessionData.subSessions = subSessions;
 	}
 

@@ -16,6 +16,7 @@
 
 	- Fixed GPT-6 Astra extended-context support and preserved maximum context windows reported by OpenAI Codex discovery ([#10980](https://github.com/can1357/oh-my-pi/pull/10980) by [@H4vC](https://github.com/H4vC)).
 - Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, and continued navigation.
+- Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, branched-session copying, continued navigation, and leak-free exports.
 
 ## [18.1.11] - 2026-09-05
 

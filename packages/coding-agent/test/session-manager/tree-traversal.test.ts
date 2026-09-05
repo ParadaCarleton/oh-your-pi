@@ -487,6 +487,24 @@ describe("createBranchedSession", () => {
 		expect(entries).toHaveLength(4);
 		expect(entries.map(e => e.id)).toEqual([id1, id2, id4, id5]);
 	});
+
+	it("drops archive records whose targets are absent from a branched session", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idAnswered = session.appendMessage(assistantMsg("answered"));
+		session.branch(idRoot);
+		const idArchivedSibling = session.appendMessage(userMsg("archived sibling"));
+		session.branch(idAnswered);
+		await session.archiveBranch(idArchivedSibling);
+		const idContinuation = session.appendMessage(userMsg("continue"));
+
+		session.createBranchedSession(idContinuation);
+
+		expect(session.getEntries().some(entry => entry.type === "archive")).toBe(false);
+		expect(session.getArchivedRootIds()).toEqual([]);
+		expect(session.getEntry(idContinuation)?.parentId).toBe(idAnswered);
+		expect(session.getBranch().map(entry => entry.id)).toEqual([idRoot, idAnswered, idContinuation]);
+	});
 });
 
 describe("pruneEmptyBranches", () => {

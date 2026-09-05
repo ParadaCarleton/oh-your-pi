@@ -1649,10 +1649,10 @@ export class SelectorController {
 					// branch removes it from the tree the component is holding, and
 					// restoring one is only reachable while archived rows are showing.
 					onArchiveToggle: async (entryId: string) => {
-						const archived = this.ctx.sessionManager.getArchivedRootIds().includes(entryId);
+						const archivedRoot = this.ctx.sessionManager.getArchivedRootId(entryId);
 						try {
-							if (archived) {
-								await this.ctx.session.restoreArchived(entryId);
+							if (archivedRoot) {
+								await this.ctx.session.restoreArchived(archivedRoot);
 							} else {
 								const hidden = await this.ctx.session.archiveBranch(entryId);
 								if (hidden === 0) return;
@@ -1663,7 +1663,7 @@ export class SelectorController {
 						}
 						done();
 						this.showTreeSelector({ includeArchived });
-						this.ctx.showStatus(archived ? "Branch restored" : "Branch archived");
+						this.ctx.showStatus(archivedRoot ? "Branch restored" : "Branch archived");
 					},
 				},
 			);

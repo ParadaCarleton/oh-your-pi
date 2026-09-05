@@ -205,19 +205,28 @@ function sessionHeaderForExport(header: SessionHeader | null): SessionHeader | n
 function visibleForExport(sm: SessionManager, includeArchived: boolean): Pick<SessionData, "entries" | "leafId"> {
 	const all = sm.getEntries();
 	const hidden = includeArchived ? undefined : sm.getArchivedEntryIds();
-	const entries = all.filter(entry => entry.type !== "archive" && !hidden?.has(entry.id));
-
-	let leafId = sm.getLeafId();
-	if (leafId !== null && entries.length !== all.length) {
-		const visible = new Set(entries.map(entry => entry.id));
-		const parentOf = new Map(all.map(entry => [entry.id, entry.parentId]));
+	const retained = all.filter(
+		entry =>
+			entry.type !== "archive" && !hidden?.has(entry.id) && !(entry.type === "label" && hidden?.has(entry.targetId)),
+	);
+	if (retained.length === all.length) return { entries: retained, leafId: sm.getLeafId() };
+	const visible = new Set(retained.map(entry => entry.id));
+	const parentOf = new Map(all.map(entry => [entry.id, entry.parentId]));
+	const nearestVisibleAncestor = (start: string | null): string | null => {
+		let cursor = start;
 		const seen = new Set<string>();
-		while (leafId !== null && !visible.has(leafId) && !seen.has(leafId)) {
-			seen.add(leafId);
-			leafId = parentOf.get(leafId) ?? null;
+		while (cursor !== null && !visible.has(cursor) && !seen.has(cursor)) {
+			seen.add(cursor);
+			cursor = parentOf.get(cursor) ?? null;
 		}
-		if (leafId !== null && !visible.has(leafId)) leafId = null;
-	}
+		return cursor !== null && visible.has(cursor) ? cursor : null;
+	};
+	const entries = retained.map(entry => {
+		const parentId = nearestVisibleAncestor(entry.parentId);
+		return parentId === entry.parentId ? entry : { ...entry, parentId };
+	});
+
+	const leafId = nearestVisibleAncestor(sm.getLeafId());
 	return { entries, leafId };
 }
 
@@ -243,10 +252,13 @@ export function buildSessionData(
  * returned record are slash-joined ids relative to the main session ("ToolAsk", "ToolAsk/Helper").
  * Corrupt or empty files are skipped silently.
  */
-export async function collectSubSessions(sessionFile: string): Promise<Record<string, SubSession>> {
+export async function collectSubSessions(
+	sessionFile: string,
+	options?: { includeArchived?: boolean },
+): Promise<Record<string, SubSession>> {
 	const result: Record<string, SubSession> = {};
 	if (!sessionFile.endsWith(".jsonl")) return result;
-	await collectSubSessionsFromDir(sessionFile.slice(0, -6), null, result);
+	await collectSubSessionsFromDir(sessionFile.slice(0, -6), null, result, options?.includeArchived === true);
 	return result;
 }
 
@@ -254,6 +266,7 @@ async function collectSubSessionsFromDir(
 	dir: string,
 	parentKey: string | null,
 	out: Record<string, SubSession>,
+	includeArchived: boolean,
 ): Promise<void> {
 	let names: string[];
 	try {
@@ -269,17 +282,17 @@ async function collectSubSessionsFromDir(
 		const fileEntries = await loadEntriesFromFile(path.join(dir, name));
 		// Empty/corrupt files (no valid session header) load as [] — skip silently.
 		if (fileEntries.length > 0) {
-			const header = (fileEntries.find(e => e.type === "session") as SessionHeader | undefined) ?? null;
-			const entries = fileEntries.filter((e): e is SessionEntry => e.type !== "session");
-			out[key] = {
-				agentId,
-				parent: parentKey,
-				header: sessionHeaderForExport(header),
-				entries,
-				leafId: entries.length > 0 ? entries[entries.length - 1].id : null,
-			};
+			const subSession = await SessionManager.open(path.join(dir, name), undefined, undefined, {
+				suppressBreadcrumb: true,
+			});
+			try {
+				const data = buildSessionData(subSession, undefined, { includeArchived });
+				out[key] = { agentId, parent: parentKey, ...data };
+			} finally {
+				await subSession.close();
+			}
 		}
-		await collectSubSessionsFromDir(path.join(dir, agentId), key, out);
+		await collectSubSessionsFromDir(path.join(dir, agentId), key, out, includeArchived);
 	}
 }
 
@@ -313,7 +326,7 @@ export async function exportSessionToHtml(
 
 	const sessionData = buildSessionData(sm, state, opts);
 	if (opts.includeSubSessions !== false) {
-		const subSessions = await collectSubSessions(sessionFile);
+		const subSessions = await collectSubSessions(sessionFile, { includeArchived: opts.includeArchived });
 		if (Object.keys(subSessions).length > 0) sessionData.subSessions = subSessions;
 	}
 
@@ -339,7 +352,7 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 
 	const sessionData = buildSessionData(sm, undefined, opts);
 	if (opts.includeSubSessions !== false) {
-		const subSessions = await collectSubSessions(inputPath);
+		const subSessions = await collectSubSessions(inputPath, { includeArchived: opts.includeArchived });
 		if (Object.keys(subSessions).length > 0) sessionData.subSessions = subSessions;
 	}
 

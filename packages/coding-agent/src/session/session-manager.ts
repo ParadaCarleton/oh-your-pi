@@ -2666,21 +2666,34 @@ export class SessionManager {
 		if (options?.includeArchived) return tree;
 		const archived = this.#index.archivedRootIds();
 		if (archived.size === 0) return tree;
-		const prune = (nodes: SessionTreeNode[]): SessionTreeNode[] => {
-			const out: SessionTreeNode[] = [];
-			for (const node of nodes) {
-				if (archived.has(node.entry.id)) continue;
-				node.children = prune(node.children);
-				out.push(node);
-			}
-			return out;
-		};
-		return prune(tree);
+
+		const visible = tree.filter(node => !archived.has(node.entry.id));
+		const stack = [...visible];
+		while (stack.length > 0) {
+			const node = stack.pop()!;
+			node.children = node.children.filter(child => !archived.has(child.entry.id));
+			for (const child of node.children) stack.push(child);
+		}
+		return visible;
 	}
 
 	/** Roots of the subtrees currently hidden by an archive record. */
 	getArchivedRootIds(): string[] {
 		return [...this.#index.archivedRootIds()];
+	}
+
+	/** The archived root hiding an entry, including the entry itself. */
+	getArchivedRootId(entryId: string): string | undefined {
+		const archived = this.#index.archivedRootIds();
+		const seen = new Set<string>();
+		let root: string | undefined;
+		let entry = this.#index.get(entryId);
+		while (entry && !seen.has(entry.id)) {
+			if (archived.has(entry.id)) root = entry.id;
+			seen.add(entry.id);
+			entry = entry.parentId ? this.#index.get(entry.parentId) : undefined;
+		}
+		return root;
 	}
 
 	/** Every entry an archive record hides: the archived roots and all below them. */
@@ -2799,7 +2812,7 @@ export class SessionManager {
 	 */
 	async archiveBranch(targetId: string): Promise<number> {
 		if (!this.#index.has(targetId)) throw new Error(`No entry ${targetId} in this session.`);
-		if (this.#index.archivedRootIds().has(targetId)) return 0;
+		if (this.getArchivedRootId(targetId)) return 0;
 		for (const entry of this.getBranch()) {
 			if (entry.id === targetId) throw new Error("That branch is the one you are in — switch away from it first.");
 		}
@@ -2822,7 +2835,8 @@ export class SessionManager {
 	 * nothing to restore them all. Returns the number of branches revealed.
 	 */
 	async restoreArchived(targetId?: string): Promise<number> {
-		const targets = targetId ? [targetId] : [...this.#index.archivedRootIds()];
+		const archivedRoot = targetId ? this.getArchivedRootId(targetId) : undefined;
+		const targets = targetId ? (archivedRoot ? [archivedRoot] : []) : [...this.#index.archivedRootIds()];
 		const restored = targets.filter(id => this.#index.archivedRootIds().has(id));
 		for (const id of restored) {
 			const entry: ArchiveEntry = { type: "archive", ...this.#freshEntryFields(), targetId: id, archived: false };

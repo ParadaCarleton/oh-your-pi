@@ -38,6 +38,21 @@ function sessionJsonl(id: string, entryIds: string[], previousSessionFiles?: str
 	return `${lines.join("\n")}\n`;
 }
 
+function archivedSessionJsonl(id: string): string {
+	const lines = sessionJsonl(id, ["visible", "hidden"]).trimEnd().split("\n");
+	lines.push(
+		JSON.stringify({
+			type: "archive",
+			id: "archive-record",
+			parentId: "visible",
+			timestamp: "2026-06-12T00:00:02.000Z",
+			targetId: "hidden",
+			archived: true,
+		}),
+	);
+	return `${lines.join("\n")}\n`;
+}
+
 describe("collectSubSessions", () => {
 	let root: string;
 	let mainFile: string;
@@ -87,6 +102,17 @@ describe("collectSubSessions", () => {
 		expect(data.subSessions.Alpha.header.previousSessionFiles).toBeUndefined();
 		expect(html).not.toContain(mainPreviousPath);
 		expect(html).not.toContain(subPreviousPath);
+	});
+
+	test("filters archived subagent branches unless explicitly included", async () => {
+		await Bun.write(path.join(root, "main/Alpha.jsonl"), archivedSessionJsonl("alpha"));
+
+		const hidden = await collectSubSessions(mainFile);
+		expect(hidden.Alpha.entries.map(entry => entry.id)).toEqual(["visible"]);
+		expect(hidden.Alpha.leafId).toBe("visible");
+
+		const revealed = await collectSubSessions(mainFile, { includeArchived: true });
+		expect(revealed.Alpha.entries.map(entry => entry.id)).toEqual(["visible", "hidden"]);
 	});
 
 	test("skips corrupt, empty, backup, and non-jsonl files", async () => {

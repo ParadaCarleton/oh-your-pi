@@ -6,6 +6,7 @@ import { runGcCommand } from "@oh-my-pi/pi-coding-agent/cli/gc-cli";
 import type { SessionHeader } from "@oh-my-pi/pi-coding-agent/session/session-entries";
 import * as sessionLiveness from "@oh-my-pi/pi-coding-agent/session/session-liveness";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { shortenPath } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 import { getSessionsDir } from "@oh-my-pi/pi-utils";
 import { holdFileOpen } from "../helpers/open-file-holder";
 import { assistantMsg, userMsg } from "../utilities";
@@ -294,7 +295,8 @@ describe("omp gc empty-session pruning", () => {
 			expect(result.pruneEmptySessions?.skipped[0]?.signals).toContain("open-handle");
 			expect(result.pruneEmptySessions?.skipped[0]?.holders.some(value => value.pid === holder.pid)).toBe(true);
 			expect(await Bun.file(file).exists()).toBe(true);
-			expect(stdout).toContain(`prune skipped: ${file} held open by pid ${holder.pid} (`);
+			expect(stdout).toContain(`prune skipped: ${shortenPath(file)} held open by pid ${holder.pid} (`);
+			expect(stdout).toContain("prune: deleted 0 of 0 dead sessions\n");
 		} finally {
 			await holder.close();
 		}

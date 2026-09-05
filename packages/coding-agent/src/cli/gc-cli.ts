@@ -2452,7 +2452,7 @@ function renderText(result: GcResult, options: ResolvedGcOptions): string {
 			unanswered > 0 ? `${unanswered} unanswered` : undefined,
 			unasked > 0 ? `${unasked} nobody asked` : undefined,
 		].filter(part => part !== undefined);
-		lines.push(`${summary} (${breakdown.join(", ")})`);
+		lines.push(breakdown.length > 0 ? `${summary} (${breakdown.join(", ")})` : summary);
 		// Silent on a clean store: an operator running this weekly should see a
 		// line only when there was something to remove.
 		if (empty.emptyDirs > 0) {

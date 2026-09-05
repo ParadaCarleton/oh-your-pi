@@ -2745,10 +2745,38 @@ export class SessionManager {
 
 		const oldLength = this.#entries.length;
 		const activeLeafId = this.#index.leafId();
+		const survivesPrune = (entry: SessionEntry): boolean => !inTree.has(entry.id) || kept.has(entry.id);
+		const survivingIds = new Set(this.#entries.filter(survivesPrune).map(entry => entry.id));
+		const survivingParentCache = new Map<string, string | null>();
+		const survivingParentOf = (entryId: string): string | null => {
+			let parentId = this.#index.get(entryId)?.parentId ?? null;
+			const traversed: string[] = [];
+			while (parentId && !survivingIds.has(parentId)) {
+				if (survivingParentCache.has(parentId)) {
+					parentId = survivingParentCache.get(parentId) ?? null;
+					break;
+				}
+				traversed.push(parentId);
+				parentId = this.#index.get(parentId)?.parentId ?? null;
+			}
+			for (const traversedId of traversed) survivingParentCache.set(traversedId, parentId);
+			return parentId;
+		};
+		const survivingLeafId =
+			activeLeafId && survivingIds.has(activeLeafId)
+				? activeLeafId
+				: activeLeafId
+					? survivingParentOf(activeLeafId)
+					: null;
 
-		this.#entries = this.#entries.filter(entry => !inTree.has(entry.id) || kept.has(entry.id));
+		for (const entry of this.#entries) {
+			if (survivingIds.has(entry.id) && entry.parentId && !survivingIds.has(entry.parentId)) {
+				entry.parentId = survivingParentOf(entry.id);
+			}
+		}
+		this.#entries = this.#entries.filter(survivesPrune);
 		this.#index.rebuild(this.#entries);
-		this.#setLeaf(activeLeafId);
+		this.#setLeaf(survivingLeafId);
 
 		const prunedCount = oldLength - this.#entries.length;
 		if (prunedCount > 0) {

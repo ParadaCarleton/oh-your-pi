@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added accessible collapse controls to the HTML export’s session tree for folding branches with visible descendants.
+
 ## [18.1.14] - 2026-09-07
 
 ### Fixed
@@ -1410,9 +1414,6 @@
 - Fixed parsing of POSIX `$EDITOR` commands that contain quoted arguments or executable paths with spaces.
 - Fixed persisted Agent Hub rows losing the explicit caller model role when a subagent used a model override, preserving role provenance across restarts.
 - Fixed unobserved promise rejections in browser helpers (such as `tab.waitForResponse()`) causing tab workers to hang or crash.
-### Added
-
-- Added collapsible branches to the HTML export's session tree: every node with children gets a ▾/▸ toggle that folds its subtree, alongside the existing active-path bullet.
 
 ## [17.2.9] - 2026-08-05
 

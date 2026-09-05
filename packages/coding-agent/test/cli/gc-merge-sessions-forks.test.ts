@@ -8,6 +8,7 @@ import type { FileEntry, SessionEntry, SessionHeader } from "@oh-my-pi/pi-coding
 import { loadEntriesFromFile } from "@oh-my-pi/pi-coding-agent/session/session-loader";
 import { FileSessionStorage } from "@oh-my-pi/pi-coding-agent/session/session-storage";
 import { serializeTitleSlot } from "@oh-my-pi/pi-coding-agent/session/session-title-slot";
+import { shortenPath } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 import { getSessionsDir } from "@oh-my-pi/pi-utils";
 import { holdFileOpen } from "../helpers/open-file-holder";
 
@@ -64,6 +65,32 @@ function entry(id: string, parentId: string | null, branch: string): SessionEntr
 		timestamp: "2026-07-17T00:00:00.000Z",
 		customType: "fork-merge-test",
 		data: { branch },
+	};
+}
+
+function completedEntry(id: string, parentId: string): SessionEntry {
+	return {
+		type: "message",
+		id,
+		parentId,
+		timestamp: "2026-07-17T00:00:01.000Z",
+		message: {
+			role: "assistant",
+			content: [],
+			api: "openai-responses",
+			provider: "openai",
+			model: "gpt-5",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.parse("2026-07-17T00:00:01.000Z"),
+		},
 	};
 }
 
@@ -321,7 +348,7 @@ describe("omp gc fork-session merge", () => {
 			"parent-branch",
 		]);
 		expect(stdout).toContain(
-			`merge: folded 1/1 file into 1 session, 2 entries added (1 fork at 1 attachment point); consumed files archived to ${archiveRoot}`,
+			`merge: folded 1/1 file into 1 session, 2 entries added (1 fork at 1 attachment point); consumed files archived to ${shortenPath(archiveRoot)}`,
 		);
 	});
 
@@ -433,7 +460,7 @@ describe("omp gc fork-session merge", () => {
 			expect(skipped?.signals).toContain("open-handle");
 			expect(skipped?.holders?.some(value => value.pid === holder.pid)).toBe(true);
 			expect(await Bun.file(pair.fork).exists()).toBe(true);
-			expect(stdout).toContain(`merge skipped: ${pair.fork} held open by pid ${holder.pid} (`);
+			expect(stdout).toContain(`merge skipped: ${shortenPath(pair.fork)} held open by pid ${holder.pid} (`);
 		} finally {
 			await holder.close();
 		}
@@ -442,6 +469,12 @@ describe("omp gc fork-session merge", () => {
 	test("grafts a fork onto the copy the duplicate phase just reunited", async () => {
 		const agentDir = path.join(root, "agent");
 		const pair = await createForkPair(agentDir);
+		const parentEntries = await loadEntriesFromFile(pair.parent, new FileSessionStorage());
+		await Bun.write(
+			pair.parent,
+			`${parentEntries.map(value => JSON.stringify(value)).join("\n")}\n${JSON.stringify(completedEntry("parent-completed", "parent-branch"))}\n`,
+		);
+		await fs.utimes(pair.parent, OLD_DATE, OLD_DATE);
 		// A second copy of the fork's parent, holding a branch only it has. One pass has
 		// to merge this first: grafting the fork from a pre-duplicate read of the parent
 		// would write back a file with `duplicate-branch` missing.
@@ -453,6 +486,7 @@ describe("omp gc fork-session merge", () => {
 				entry("shared-root", null, "shared-root"),
 				entry("attachment", "shared-root", "attachment"),
 				entry("duplicate-branch", "attachment", "duplicate"),
+				completedEntry("duplicate-completed", "duplicate-branch"),
 			],
 		);
 

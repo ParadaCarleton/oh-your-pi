@@ -8,6 +8,7 @@ import type { FileEntry, SessionEntry, SessionHeader } from "@oh-my-pi/pi-coding
 import { loadEntriesFromFile } from "@oh-my-pi/pi-coding-agent/session/session-loader";
 import { computeDefaultSessionDir } from "@oh-my-pi/pi-coding-agent/session/session-paths";
 import { FileSessionStorage } from "@oh-my-pi/pi-coding-agent/session/session-storage";
+import { shortenPath } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 import { getSessionsDir } from "@oh-my-pi/pi-utils";
 import { holdFileOpen } from "../helpers/open-file-holder";
 
@@ -213,7 +214,7 @@ describe("omp gc duplicate-session merge", () => {
 			expect(result.mergeSessions?.candidates).toEqual([]);
 			expect(await Bun.file(pair.destination).text()).toBe(destinationBefore);
 			expect(await Bun.file(pair.source).text()).toBe(sourceBefore);
-			expect(stdout).toContain(`merge skipped: ${pair.source} held open by pid ${holder.pid} (`);
+			expect(stdout).toContain(`merge skipped: ${shortenPath(pair.source)} held open by pid ${holder.pid} (`);
 		} finally {
 			await holder.close();
 		}

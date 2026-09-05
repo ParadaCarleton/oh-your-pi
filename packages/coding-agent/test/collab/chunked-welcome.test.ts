@@ -48,6 +48,14 @@ function makeLargeSnapshot(): SizedSnapshot {
 			message: { role: "user", content: body, timestamp: 0 },
 		});
 	}
+	entries.push({
+		type: "archive",
+		id: "archive-1",
+		parentId: "e95",
+		timestamp: "2026-06-20T00:00:02Z",
+		targetId: "e1",
+		archived: true,
+	});
 	return {
 		header: { type: "session", id: "sess-large", timestamp: "2026-06-20T00:00:00Z", cwd: "/tmp" },
 		entries,
@@ -247,6 +255,7 @@ describe("collab chunked welcome (#3144)", () => {
 		for (const chunk of chunks) flattened.push(...chunk.entries);
 		expect(flattened.length).toBe(snapshot.entries.length);
 		expect(flattened.map(e => e.id)).toEqual(snapshot.entries.map(e => e.id));
+		expect(flattened.at(-1)).toMatchObject({ type: "archive", targetId: "e1", archived: true });
 	});
 
 	it("rejects the pending join when snapshot resume fails", async () => {

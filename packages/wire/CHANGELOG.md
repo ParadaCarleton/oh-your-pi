@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added archive-state entries to collaboration session replication.
+
 ## [16.3.0] - 2026-07-02
 
 ### Breaking Changes

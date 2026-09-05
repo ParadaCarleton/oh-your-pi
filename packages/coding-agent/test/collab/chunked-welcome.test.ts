@@ -70,6 +70,7 @@ function makeHostContext(snapshot: SizedSnapshot): InteractiveModeContext {
 			getCwd: () => snapshot.header.cwd,
 			snapshotForReplication: () => snapshot,
 			onEntryAppended: undefined,
+			onEntriesReplaced: undefined,
 		},
 		session: {
 			isStreaming: false,
@@ -183,11 +184,12 @@ function makeCancelledSwitchGuestContext(
 // ── Shared host/relay ───────────────────────────────────────────────────────
 
 const snapshot = makeLargeSnapshot();
+const hostContext = makeHostContext(snapshot);
 let host: CollabHost;
 
 beforeAll(async () => {
 	installInMemoryRelay();
-	host = new CollabHost(makeHostContext(snapshot));
+	host = new CollabHost(hostContext);
 	await host.start("ws://localhost:8788");
 });
 
@@ -256,6 +258,35 @@ describe("collab chunked welcome (#3144)", () => {
 		expect(flattened.length).toBe(snapshot.entries.length);
 		expect(flattened.map(e => e.id)).toEqual(snapshot.entries.map(e => e.id));
 		expect(flattened.at(-1)).toMatchObject({ type: "archive", targetId: "e1", archived: true });
+	});
+
+	it("resends the complete snapshot after the host journal is replaced", async () => {
+		const parsed = parseCollabLink(host.link);
+		if ("error" in parsed) throw new Error(parsed.error);
+		const key = await importRoomKey(parsed.key);
+		const socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key });
+		guestCleanups.push(() => socket.close());
+
+		const welcomes: CollabFrame[] = [];
+		let completedSnapshots = 0;
+		const first = Promise.withResolvers<void>();
+		const second = Promise.withResolvers<void>();
+		socket.onFrame = frame => {
+			if (frame.t === "welcome") welcomes.push(frame);
+			if (frame.t !== "snapshot-chunk" || !frame.final) return;
+			completedSnapshots++;
+			if (completedSnapshots === 1) first.resolve();
+			if (completedSnapshots === 2) second.resolve();
+		};
+		socket.onOpen = () => socket.send({ t: "hello", proto: COLLAB_PROTO, name: "test" });
+		socket.connect();
+		await first.promise;
+
+		hostContext.sessionManager.onEntriesReplaced?.();
+		await second.promise;
+
+		expect(welcomes).toHaveLength(2);
+		expect(welcomes.every(frame => frame.t === "welcome" && frame.entryCount === snapshot.entries.length)).toBe(true);
 	});
 
 	it("rejects the pending join when snapshot resume fails", async () => {

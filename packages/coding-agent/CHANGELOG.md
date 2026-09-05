@@ -10,6 +10,7 @@
 ### Fixed
 
 	- Fixed GPT-6 Astra extended-context support and preserved maximum context windows reported by OpenAI Codex discovery ([#10980](https://github.com/can1357/oh-my-pi/pull/10980) by [@H4vC](https://github.com/H4vC)).
+- Fixed background job results being lost or delivered twice when overlapping foreground waits watched the same job ([#10436](https://github.com/can1357/oh-my-pi/pull/10436)).
 
 ## [18.1.11] - 2026-09-05
 
@@ -324,7 +325,6 @@
 - Fixed an issue where custom model overrides were lost during configuration updates
 - Fixed "Please use nerdfont" notification incorrectly persisting after theme configuration
 - Fixed sampling parameter errors for newer Anthropic models (Opus 4.7+, Sonnet 5+)
-- Fixed background job results being lost when the job settled during a `hub wait` that returned on an incoming peer message: the result now auto-delivers instead of waiting for a later snapshot to sweep it up ([#10436](https://github.com/can1357/oh-my-pi/pull/10436)).
 
 ## [18.0.11] - 2026-08-29
 

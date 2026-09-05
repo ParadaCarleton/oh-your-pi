@@ -59,6 +59,46 @@ function entry(id: string, parentId: string | null, branch: string): SessionEntr
 	};
 }
 
+function completedEntry(): SessionEntry {
+	return {
+		type: "message",
+		id: "completed",
+		parentId: "shared",
+		timestamp: "2026-07-17T00:00:01.000Z",
+		message: {
+			role: "assistant",
+			content: [],
+			api: "openai-responses",
+			provider: "openai",
+			model: "gpt-5",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.parse("2026-07-17T00:00:01.000Z"),
+		},
+	};
+}
+
+function pendingEntry(): SessionEntry {
+	return {
+		type: "message",
+		id: "pending",
+		parentId: "source-branch",
+		timestamp: "2026-07-17T00:00:02.000Z",
+		message: {
+			role: "user",
+			content: [{ type: "text", text: "continue" }],
+			timestamp: Date.parse("2026-07-17T00:00:02.000Z"),
+		},
+	};
+}
+
 async function writeSession(
 	directory: string,
 	filename: string,
@@ -91,10 +131,12 @@ async function createDivergentPair(agentDir: string): Promise<{
 	const destination = await writeSession(destinationDir, filename, header(SESSION_ID, cwd), [
 		shared,
 		entry("destination-branch", "shared", "destination"),
+		completedEntry(),
 	]);
 	const source = await writeSession(sourceDir, filename, header(SESSION_ID, cwd), [
 		shared,
 		entry("source-branch", "shared", "source"),
+		completedEntry(),
 	]);
 	const sourceArtifacts = source.slice(0, -".jsonl".length);
 	const sourceArtifact = path.join(sourceArtifacts, "attachments", "branch.txt");
@@ -177,6 +219,32 @@ describe("omp gc duplicate-session merge", () => {
 		}
 	});
 
+	test("skips the whole duplicate group when one copy has a resumable status", async () => {
+		const agentDir = path.join(root, "agent");
+		const pair = await createDivergentPair(agentDir);
+		const destinationBefore = await Bun.file(pair.destination).text();
+		const sourceEntries = await loadEntriesFromFile(pair.source, new FileSessionStorage());
+		await Bun.write(
+			pair.source,
+			`${[...sourceEntries, pendingEntry()].map(value => JSON.stringify(value)).join("\n")}\n`,
+		);
+		await fs.utimes(pair.source, OLD_DATE, OLD_DATE);
+		const sourceBefore = await Bun.file(pair.source).text();
+
+		const result = await runGcCommand({ flags: { agentDir, mergeSessions: true, apply: true } });
+
+		expect(result.mergeSessions?.duplicateGroups).toBe(0);
+		expect(result.mergeSessions?.merged).toBe(0);
+		expect(result.mergeSessions?.skippedActive).toBe(2);
+		expect(result.mergeSessions?.skipped).toContainEqual({
+			sessionId: SESSION_ID,
+			path: pair.source,
+			reason: "session status is pending",
+		});
+		expect(await Bun.file(pair.destination).text()).toBe(destinationBefore);
+		expect(await Bun.file(pair.source).text()).toBe(sourceBefore);
+	});
+
 	test("merges an explicitly old duplicate pair without skipped files", async () => {
 		const agentDir = path.join(root, "agent");
 		const pair = await createDivergentPair(agentDir);
@@ -192,7 +260,7 @@ describe("omp gc duplicate-session merge", () => {
 		// stays last and reopening the session resumes the branch it was on.
 		expect(
 			logicalEntries(await loadEntriesFromFile(pair.destination, new FileSessionStorage())).map(value => value.id),
-		).toEqual(["shared", "source-branch", "destination-branch"]);
+		).toEqual(["shared", "source-branch", "destination-branch", "completed"]);
 		expect(stdout).toContain("merge: folded 1/1 file into 1 session, 1 entry added (1 duplicate copy of 1 session)");
 	});
 
@@ -226,7 +294,7 @@ describe("omp gc duplicate-session merge", () => {
 		expect(result.mergeSessions?.merged).toBe(1);
 		expect(result.mergeSessions?.archivedSources).toBe(1);
 		const merged = logicalEntries(await loadEntriesFromFile(pair.destination, new FileSessionStorage()));
-		expect(merged.map(value => value.id)).toEqual(["shared", "source-branch", "destination-branch"]);
+		expect(merged.map(value => value.id)).toEqual(["shared", "source-branch", "destination-branch", "completed"]);
 		expect(merged.at(-1)?.id).toBe(pair.destinationBefore.at(-1)?.id);
 		const backups = await backupFiles(pair.destination);
 		expect(backups).toHaveLength(1);
@@ -240,7 +308,7 @@ describe("omp gc duplicate-session merge", () => {
 			path.relative(sessionsRoot, pair.source),
 		);
 		expect(await Bun.file(archivedSource).exists()).toBe(true);
-		expect(await loadEntriesFromFile(archivedSource, new FileSessionStorage())).toHaveLength(3);
+		expect(await loadEntriesFromFile(archivedSource, new FileSessionStorage())).toHaveLength(4);
 		const archivedArtifact = path.join(
 			path.dirname(archivedSource),
 			path.basename(archivedSource, ".jsonl"),

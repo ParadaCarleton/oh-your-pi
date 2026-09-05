@@ -661,6 +661,9 @@ async function collectDuplicateSessionGroups(
 ): Promise<DuplicateSessionGroup[]> {
 	const files = (await collectJsonlFiles(sessionsRoot)).filter(file => isTopLevelSessionFile(sessionsRoot, file));
 	result.scanned = files.length;
+	const statusByPath = new Map(
+		(await listActiveSessions(sessionsRoot)).map(session => [path.resolve(session.path), session.status]),
+	);
 	const byId = new Map<string, Array<{ path: string }>>();
 	for (const file of files) {
 		try {
@@ -678,6 +681,21 @@ async function collectDuplicateSessionGroups(
 	const groups: DuplicateSessionGroup[] = [];
 	for (const [sessionId, members] of byId) {
 		if (members.length < 2 || new Set(members.map(member => path.dirname(member.path))).size < 2) continue;
+		const active = members.filter(member => {
+			const status = statusByPath.get(path.resolve(member.path));
+			return status !== undefined && ACTIVE_STATUSES.has(status);
+		});
+		if (active.length > 0) {
+			result.skippedActive += members.length;
+			for (const member of active) {
+				result.skipped.push({
+					sessionId,
+					path: member.path,
+					reason: `session status is ${statusByPath.get(path.resolve(member.path))}`,
+				});
+			}
+			continue;
+		}
 		const live = (await Promise.all(members.map(member => inspectGcLiveness(member.path, degraded)))).filter(
 			liveness => liveness.live,
 		);

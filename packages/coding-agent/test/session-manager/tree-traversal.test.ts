@@ -910,6 +910,32 @@ describe("archiveEmptyBranches", () => {
 		expect(all).toContain(idEmptyBTool);
 	});
 
+	it("filters a 100,000-entry archived tree without overflowing the stack", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		let activeLeaf = idRoot;
+		for (let i = 1; i < 100_000; i++) activeLeaf = session.appendModelChange(`test/model-${i}`);
+
+		session.branch(idRoot);
+		const archivedId = session.appendMessage(userMsg("archived sibling"));
+		session.branch(activeLeaf);
+		await session.archiveBranch(archivedId);
+
+		const stack = [...session.getTree()];
+		let visibleCount = 0;
+		let sawArchivedEntry = false;
+		while (stack.length > 0) {
+			const node = stack.pop()!;
+			visibleCount++;
+			if (node.entry.id === archivedId) sawArchivedEntry = true;
+			stack.push(...node.children);
+		}
+		// The deep active chain and the append-only archive record remain visible
+		// to SessionManager; consumers omit the bookkeeping row themselves.
+		expect(visibleCount).toBe(100_001);
+		expect(sawArchivedEntry).toBe(false);
+	});
+
 	it("restores every branch with no argument and only one when given an id", async () => {
 		const one = buildForkedSession();
 		await one.session.archiveEmptyBranches();
@@ -1033,6 +1059,19 @@ describe("archiveBranch", () => {
 
 		expect(await session.archiveBranch(idOther)).toBe(0);
 		expect(session.getEntries()).toHaveLength(after);
+	});
+
+	it("restores an archived ancestor when given one of its descendants", async () => {
+		const { session, idOther, idOtherAsst } = buildTwoAnsweredBranches();
+		await session.archiveBranch(idOther);
+		const afterArchive = session.getEntries().length;
+
+		expect(session.getArchivedRootId(idOtherAsst)).toBe(idOther);
+		expect(await session.archiveBranch(idOtherAsst)).toBe(0);
+		expect(session.getEntries()).toHaveLength(afterArchive);
+		expect(await session.restoreArchived(idOtherAsst)).toBe(1);
+		expect(session.getArchivedRootIds()).toEqual([]);
+		expect(treeIds(session.getTree())).toContain(idOtherAsst);
 	});
 
 	it("restores what it hid", async () => {

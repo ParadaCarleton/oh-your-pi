@@ -259,7 +259,7 @@ describe("tree selector collapse", () => {
 		const selector = new TreeSelectorComponent(
 			[root],
 			"n11",
-			10,
+			13,
 			() => {},
 			() => {},
 		);

@@ -1475,11 +1475,12 @@ export class SelectorController {
 				realLeafId,
 				this.ctx.ui.terminal.rows,
 				async (entryId, options) => {
+					const archivedRoot = this.ctx.sessionManager.getArchivedRootId(entryId);
 					// Selecting the current leaf is normally a no-op (already there) —
 					// unless it's an `ask` toolResult, in which case the re-answer flow
 					// must still be allowed to reopen the picker even though the leaf
 					// doesn't move (chatgpt-codex review on #5895).
-					if (entryId === realLeafId) {
+					if (entryId === realLeafId && !archivedRoot) {
 						const currentEntry = this.ctx.sessionManager.getEntry(entryId);
 						const currentIsAskResult =
 							currentEntry?.type === "message" &&
@@ -1557,6 +1558,9 @@ export class SelectorController {
 					}
 
 					try {
+						// Revealed archived rows are selectable, but the active branch must
+						// never remain hidden after navigation.
+						if (archivedRoot) await this.ctx.session.restoreArchived(archivedRoot);
 						let result = await this.ctx.session.navigateTree(entryId, {
 							summarize: wantsSummary,
 							customInstructions,

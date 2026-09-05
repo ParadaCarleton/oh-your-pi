@@ -37,6 +37,8 @@ interface GutterInfo {
 /** Flattened tree node for navigation */
 interface FlatNode {
 	node: SessionTreeNode;
+	/** Nearest visible ancestor in the current projection. */
+	projectedParentId: string | null;
 	/** Indentation level (each level = 3 chars) */
 	indent: number;
 	/** Whether to show connector (├─ or └─) - true if parent has multiple children */
@@ -157,7 +159,11 @@ class TreeList implements Component {
 	#activePathIds: Set<string> = new Set();
 	#lastSelectedId: string | null = null;
 	#collapsedIds: Set<string> = new Set();
+	#bulkCollapsedIds: Set<string> = new Set();
+	#bulkFocusActive = false;
 	#hiddenDescendantCounts: Map<string, number> = new Map();
+	#tree: SessionTreeNode[] = [];
+	#allFlatNodes: FlatNode[] = [];
 
 	onSelect?: (entryId: string, options: { summarize: boolean }) => void;
 	onCancel?: () => void;
@@ -171,8 +177,10 @@ class TreeList implements Component {
 		initialSelectedId?: string,
 	) {
 		this.#filterMode = initialFilterMode;
-		this.#multipleRoots = tree.length > 1;
-		this.#flatNodes = this.#flattenTree(tree);
+		this.#tree = tree;
+		this.#collectToolCalls(tree);
+		this.#flatNodes = this.#flattenTree(tree, () => true);
+		this.#allFlatNodes = this.#flatNodes;
 		this.#buildActivePath();
 		this.#applyFilter();
 
@@ -189,7 +197,7 @@ class TreeList implements Component {
 
 		// Build a map of id -> entry for parent lookup
 		const entryMap = new Map<string, FlatNode>();
-		for (const flatNode of this.#flatNodes) {
+		for (const flatNode of this.#allFlatNodes) {
 			entryMap.set(flatNode.node.entry.id, flatNode);
 		}
 
@@ -212,7 +220,7 @@ class TreeList implements Component {
 
 		// Build a map for parent lookup
 		const entryMap = new Map<string, FlatNode>();
-		for (const flatNode of this.#flatNodes) {
+		for (const flatNode of this.#allFlatNodes) {
 			entryMap.set(flatNode.node.entry.id, flatNode);
 		}
 
@@ -233,16 +241,47 @@ class TreeList implements Component {
 		return this.#filteredNodes.length - 1;
 	}
 
-	#flattenTree(roots: SessionTreeNode[]): FlatNode[] {
-		const result: FlatNode[] = [];
+	/** Tool calls resolve labels for tool results, so collect them before filtering. */
+	#collectToolCalls(roots: SessionTreeNode[]): void {
 		this.#toolCallMap.clear();
+		const stack = [...roots];
+		while (stack.length > 0) {
+			const node = stack.pop()!;
+			for (const child of node.children) stack.push(child);
+			const entry = node.entry;
+			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+			const content = (entry.message as { content?: unknown }).content;
+			if (!Array.isArray(content)) continue;
+			for (const block of content) {
+				if (typeof block === "object" && block !== null && "type" in block && block.type === "toolCall") {
+					const tc = block as { id: string; name: string; arguments: Record<string, unknown> };
+					this.#toolCallMap.set(tc.id, { name: tc.name, arguments: tc.arguments });
+				}
+			}
+		}
+	}
+
+	/** Promote visible descendants through rows omitted by the current filter. */
+	#visibleDescendants(children: SessionTreeNode[], isVisible: (node: SessionTreeNode) => boolean): SessionTreeNode[] {
+		const visible: SessionTreeNode[] = [];
+		const pending = [...children].reverse();
+		while (pending.length > 0) {
+			const candidate = pending.pop()!;
+			if (isVisible(candidate)) visible.push(candidate);
+			else for (let i = candidate.children.length - 1; i >= 0; i--) pending.push(candidate.children[i]);
+		}
+		return visible;
+	}
+
+	#flattenTree(roots: SessionTreeNode[], isVisible: (node: SessionTreeNode) => boolean): FlatNode[] {
+		const result: FlatNode[] = [];
 
 		// A real branch point adds one indentation level. Linear conversation
 		// chains retain that level so their text stays aligned with the branch
 		// head instead of drifting right after every fork.
 
-		// Stack items: [node, indent, showConnector, isLast, gutters, isVirtualRootChild]
-		type StackItem = [SessionTreeNode, number, boolean, boolean, GutterInfo[], boolean];
+		// Stack items: [node, projectedParentId, indent, showConnector, isLast, gutters, isVirtualRootChild]
+		type StackItem = [SessionTreeNode, string | null, number, boolean, boolean, GutterInfo[], boolean];
 		const stack: StackItem[] = [];
 
 		// Determine which subtrees contain the active leaf (to sort current branch first)
@@ -276,33 +315,23 @@ class TreeList implements Component {
 
 		// Add roots in reverse order, prioritizing the one containing the active leaf
 		// If multiple roots, treat them as children of a virtual root that branches
-		const multipleRoots = roots.length > 1;
-		const orderedRoots = [...roots].sort((a, b) => Number(containsActive.get(b)) - Number(containsActive.get(a)));
+		const visibleRoots = this.#visibleDescendants(roots, isVisible);
+		const multipleRoots = visibleRoots.length > 1;
+		this.#multipleRoots = multipleRoots;
+		const orderedRoots = [...visibleRoots].sort(
+			(a, b) => Number(containsActive.get(b)) - Number(containsActive.get(a)),
+		);
 		for (let i = orderedRoots.length - 1; i >= 0; i--) {
 			const isLast = i === orderedRoots.length - 1;
-			stack.push([orderedRoots[i], multipleRoots ? 1 : 0, multipleRoots, isLast, [], multipleRoots]);
+			stack.push([orderedRoots[i], null, multipleRoots ? 1 : 0, multipleRoots, isLast, [], multipleRoots]);
 		}
 
 		while (stack.length > 0) {
-			const [node, indent, showConnector, isLast, gutters, isVirtualRootChild] = stack.pop()!;
+			const [node, projectedParentId, indent, showConnector, isLast, gutters, isVirtualRootChild] = stack.pop()!;
 
-			// Extract tool calls from assistant messages for later lookup
-			const entry = node.entry;
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				const content = (entry.message as { content?: unknown }).content;
-				if (Array.isArray(content)) {
-					for (const block of content) {
-						if (typeof block === "object" && block !== null && "type" in block && block.type === "toolCall") {
-							const tc = block as { id: string; name: string; arguments: Record<string, unknown> };
-							this.#toolCallMap.set(tc.id, { name: tc.name, arguments: tc.arguments });
-						}
-					}
-				}
-			}
+			result.push({ node, projectedParentId, indent, showConnector, isLast, gutters, isVirtualRootChild });
 
-			result.push({ node, indent, showConnector, isLast, gutters, isVirtualRootChild });
-
-			const children = node.children;
+			const children = this.#visibleDescendants(node.children, isVisible);
 			const multipleChildren = children.length > 1;
 
 			// Order children so the branch containing the active leaf comes first
@@ -339,7 +368,15 @@ class TreeList implements Component {
 			// Add children in reverse order
 			for (let i = orderedChildren.length - 1; i >= 0; i--) {
 				const childIsLast = i === orderedChildren.length - 1;
-				stack.push([orderedChildren[i], childIndent, multipleChildren, childIsLast, childGutters, false]);
+				stack.push([
+					orderedChildren[i],
+					node.entry.id,
+					childIndent,
+					multipleChildren,
+					childIsLast,
+					childGutters,
+					false,
+				]);
 			}
 		}
 
@@ -357,18 +394,19 @@ class TreeList implements Component {
 	 */
 	#hideCollapsedDescendants(flatNodes: FlatNode[]): FlatNode[] {
 		this.#hiddenDescendantCounts.clear();
-		if (this.#collapsedIds.size === 0) return flatNodes;
+		if (this.#collapsedIds.size === 0 && this.#bulkCollapsedIds.size === 0) return flatNodes;
+		const isCollapsed = (id: string): boolean => this.#collapsedIds.has(id) || this.#bulkCollapsedIds.has(id);
 
 		// id -> the collapsed ancestor that hid it, so counts land on the node the
 		// user actually collapsed rather than on intermediate descendants.
 		const hiddenUnder = new Map<string, string>();
 		return flatNodes.filter(flatNode => {
-			const parentId = flatNode.node.entry.parentId;
+			const parentId = flatNode.projectedParentId;
 			if (!parentId) return true;
 			// An already-hidden parent wins over a collapsed one: a collapse nested
 			// inside another collapse is invisible, so its descendants belong to the
 			// outermost fold — the only one whose count the user can see.
-			const collapseRoot = hiddenUnder.get(parentId) ?? (this.#collapsedIds.has(parentId) ? parentId : undefined);
+			const collapseRoot = hiddenUnder.get(parentId) ?? (isCollapsed(parentId) ? parentId : undefined);
 			if (collapseRoot === undefined) return true;
 			hiddenUnder.set(flatNode.node.entry.id, collapseRoot);
 			this.#hiddenDescendantCounts.set(collapseRoot, (this.#hiddenDescendantCounts.get(collapseRoot) ?? 0) + 1);
@@ -381,8 +419,8 @@ class TreeList implements Component {
 	 * collapse. Split out of {@link #applyFilter} because folding a branch has to
 	 * know which of its rows the user can actually see.
 	 */
-	#passesFilter(flatNode: FlatNode, searchTokens: string[]): boolean {
-		const entry = flatNode.node.entry;
+	#passesFilter(node: SessionTreeNode, searchTokens: string[]): boolean {
+		const entry = node.entry;
 		const isCurrentLeaf = entry.id === this.currentLeafId;
 
 		// Skip assistant messages with only tool calls (no text) unless error/aborted
@@ -423,7 +461,7 @@ class TreeList implements Component {
 				break;
 			case "labeled-only":
 				// Just labeled entries
-				passesFilter = flatNode.node.label !== undefined;
+				passesFilter = node.label !== undefined;
 				break;
 			case "all":
 				// Show everything
@@ -439,7 +477,7 @@ class TreeList implements Component {
 
 		// Apply fuzzy search filter
 		if (searchTokens.length > 0) {
-			const nodeText = this.#getSearchableText(flatNode.node);
+			const nodeText = this.#getSearchableText(node);
 			return searchTokens.every(token => fuzzyMatch(token, nodeText).matches);
 		}
 
@@ -453,12 +491,11 @@ class TreeList implements Component {
 			this.#lastSelectedId = this.#filteredNodes[this.#selectedIndex]?.node.entry.id ?? this.#lastSelectedId;
 		}
 
-		// Collapse first, filter second: a collapsed subtree is gone regardless of
-		// which filter mode is active.
 		const searchTokens = this.#searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
-		this.#filteredNodes = this.#hideCollapsedDescendants(this.#flatNodes).filter(flatNode =>
-			this.#passesFilter(flatNode, searchTokens),
-		);
+		// Shape the visible tree first so hidden rows do not own branches,
+		// indentation, collapse anchors, or hidden-descendant counts.
+		this.#flatNodes = this.#flattenTree(this.#tree, node => this.#passesFilter(node, searchTokens));
+		this.#filteredNodes = this.#hideCollapsedDescendants(this.#flatNodes);
 
 		// Try to preserve cursor on the same node, or find nearest visible ancestor
 		if (this.#lastSelectedId) {
@@ -584,7 +621,7 @@ class TreeList implements Component {
 	}
 
 	isCollapsed(entryId: string): boolean {
-		return this.#collapsedIds.has(entryId);
+		return this.#collapsedIds.has(entryId) || this.#bulkCollapsedIds.has(entryId);
 	}
 
 	/**
@@ -594,7 +631,7 @@ class TreeList implements Component {
 	 */
 	toggleCollapse(): void {
 		const selected = this.#filteredNodes[this.#selectedIndex];
-		if (!selected || selected.node.children.length === 0) return;
+		if (!selected || !this.#flatNodes.some(node => node.projectedParentId === selected.node.entry.id)) return;
 		const entryId = selected.node.entry.id;
 		if (!this.#collapsedIds.delete(entryId)) this.#collapsedIds.add(entryId);
 		this.#applyFilter();
@@ -603,22 +640,30 @@ class TreeList implements Component {
 	/**
 	 * Fold every branch that hangs off the current thread, leaving the path to
 	 * the active leaf fully expanded and each abandoned branch showing as a
-	 * single row. Pressing it again expands everything.
+	 * single row. Pressing it again removes these focused-thread folds without
+	 * disturbing branches the user folded manually.
 	 *
 	 * This is the useful shape of a bulk collapse: folding *all* fork points also
 	 * folds the thread you are reading, which is the one thing you never want
 	 * hidden.
 	 */
 	focusCurrentThread(): void {
-		if (this.#collapsedIds.size > 0) {
-			this.#collapsedIds.clear();
+		if (this.#bulkFocusActive) {
+			this.#bulkFocusActive = false;
+			this.#bulkCollapsedIds.clear();
 			this.#applyFilter();
 			return;
 		}
-		const searchTokens = this.#searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
-		const byId = new Map(this.#flatNodes.map(flatNode => [flatNode.node.entry.id, flatNode]));
+		this.#bulkFocusActive = true;
+		this.#bulkCollapsedIds.clear();
+		const visibleChildCounts = new Map<string, number>();
+		for (const node of this.#flatNodes) {
+			if (node.projectedParentId)
+				visibleChildCounts.set(node.projectedParentId, (visibleChildCounts.get(node.projectedParentId) ?? 0) + 1);
+		}
 		for (const flatNode of this.#flatNodes) {
-			const { id, parentId } = flatNode.node.entry;
+			const { id } = flatNode.node.entry;
+			const parentId = flatNode.projectedParentId;
 			// One fold per off-thread branch, anchored at its head — the first node
 			// that leaves the active path. Folding its descendants too would be
 			// invisible (they are already hidden) and would leave stale collapse
@@ -626,92 +671,14 @@ class TreeList implements Component {
 			if (this.#activePathIds.has(id)) continue;
 			if (!parentId || !this.#activePathIds.has(parentId)) continue;
 
-			// The head itself is often filtered away (a bare tool call, say). Folding
-			// it would hide the branch entirely, marker and count included, so the
-			// fold slides down to the first row the user can actually see.
-			let anchor: FlatNode | undefined = flatNode;
-			while (anchor && !this.#passesFilter(anchor, searchTokens)) {
-				anchor = anchor.node.children.length === 1 ? byId.get(anchor.node.children[0]!.entry.id) : undefined;
-			}
-			if (!anchor || anchor.node.children.length === 0) continue;
-			this.#collapsedIds.add(anchor.node.entry.id);
+			if ((visibleChildCounts.get(id) ?? 0) === 0) continue;
+			this.#bulkCollapsedIds.add(id);
 		}
 		this.#applyFilter();
 	}
 
-	/**
-	 * Move the cursor along the branch you are on: `-1` climbs to the nearest
-	 * fork above the selection, `1` descends to the nearest fork below it. Both
-	 * follow parent links rather than screen order, so a fork on a sibling branch
-	 * is never what you land on — with the active branch drawn first, the row
-	 * above the cursor often belongs to another thread entirely. Row depth cannot
-	 * stand in for this: linear continuations share their branch head's indent.
-	 *
-	 * A fork whose branches are hidden (collapsed, or filtered away) is not a
-	 * fork worth stopping at, so what counts is the visible child count. With no
-	 * fork left in the chosen direction the cursor rides the chain to its end.
-	 */
-	jumpToBranchPoint(direction: 1 | -1): void {
-		const nodes = this.#filteredNodes;
-		const current = nodes[this.#selectedIndex];
-		if (!current) return;
-
-		const indexById = new Map<string, number>();
-		const visibleChildCounts = new Map<string, number>();
-		const firstChildByParent = new Map<string, number>();
-		for (let i = 0; i < nodes.length; i++) {
-			indexById.set(nodes[i].node.entry.id, i);
-			const parentId = nodes[i].node.entry.parentId;
-			if (!parentId) continue;
-			visibleChildCounts.set(parentId, (visibleChildCounts.get(parentId) ?? 0) + 1);
-			if (!firstChildByParent.has(parentId)) firstChildByParent.set(parentId, i);
-		}
-		const isFork = (index: number): boolean => (visibleChildCounts.get(nodes[index].node.entry.id) ?? 0) > 1;
-		// Ancestry comes off the full tree: a hidden parent still links its child
-		// to the fork above it.
-		const parentByChild = new Map<string, string | null>(
-			this.#flatNodes.map(flatNode => [flatNode.node.entry.id, flatNode.node.entry.parentId]),
-		);
-
-		if (direction < 0) {
-			// Skip straight over ancestors the filter hid, or the climb would stop
-			// dead at the first gap instead of reaching the fork above it.
-			let parentId = current.node.entry.parentId;
-			let highest = -1;
-			const seen = new Set<string>();
-			while (parentId && !seen.has(parentId)) {
-				seen.add(parentId);
-				const index = indexById.get(parentId);
-				if (index !== undefined) {
-					highest = index;
-					if (isFork(index)) {
-						this.#selectedIndex = index;
-						return;
-					}
-				}
-				parentId = parentByChild.get(parentId) ?? null;
-			}
-			if (highest >= 0) this.#selectedIndex = highest;
-			return;
-		}
-
-		// The first child listed is the one on the active branch, which is the
-		// thread being read.
-		let index = firstChildByParent.get(current.node.entry.id);
-		let deepest = -1;
-		while (index !== undefined) {
-			deepest = index;
-			if (isFork(index)) {
-				this.#selectedIndex = index;
-				return;
-			}
-			index = firstChildByParent.get(nodes[index].node.entry.id);
-		}
-		if (deepest >= 0) this.#selectedIndex = deepest;
-	}
-
 	updateNodeLabel(entryId: string, label: string | undefined): void {
-		for (const flatNode of this.#flatNodes) {
+		for (const flatNode of this.#allFlatNodes) {
 			if (flatNode.node.entry.id === entryId) {
 				flatNode.node.label = label;
 				break;
@@ -745,26 +712,26 @@ class TreeList implements Component {
 			//    how to widen it. Otherwise fresh sessions whose only persisted entries are
 			//    `model_change` + `thinking_level_change` (both hidden by the default filter)
 			//    read as "broken /tree" — see #1909.
-			if (this.#flatNodes.length === 0) {
+			if (this.#allFlatNodes.length === 0) {
 				lines.push(truncateToWidth(theme.fg("muted", "No entries found"), width));
 				lines.push(truncateToWidth(theme.fg("muted", `(0/0)${this.#getFilterLabel()}`), width));
 			} else if (this.#searchQuery.length > 0) {
 				lines.push(truncateToWidth(theme.fg("muted", `No entries match search "${this.#searchQuery}"`), width));
 				lines.push(truncateToWidth(theme.fg("muted", "Press Backspace to clear the search"), width));
 				lines.push(
-					truncateToWidth(theme.fg("muted", `(0/${this.#flatNodes.length})${this.#getFilterLabel()}`), width),
+					truncateToWidth(theme.fg("muted", `(0/${this.#allFlatNodes.length})${this.#getFilterLabel()}`), width),
 				);
 			} else {
 				const filterLabel = this.#getFilterLabel().trim() || "[default]";
 				lines.push(
 					truncateToWidth(
-						theme.fg("muted", `${this.#flatNodes.length} entries hidden by the current filter ${filterLabel}`),
+						theme.fg("muted", `${this.#allFlatNodes.length} entries hidden by the current filter ${filterLabel}`),
 						width,
 					),
 				);
 				lines.push(truncateToWidth(theme.fg("muted", "Press Alt+A to show all, Alt+D for default"), width));
 				lines.push(
-					truncateToWidth(theme.fg("muted", `(0/${this.#flatNodes.length})${this.#getFilterLabel()}`), width),
+					truncateToWidth(theme.fg("muted", `(0/${this.#allFlatNodes.length})${this.#getFilterLabel()}`), width),
 				);
 			}
 			return lines;
@@ -1140,13 +1107,9 @@ class TreeList implements Component {
 			this.#selectedIndex = 0;
 		} else if (matchesKey(keyData, "end")) {
 			this.#selectedIndex = Math.max(0, this.#filteredNodes.length - 1);
-		} else if (matchesKey(keyData, "left")) {
-			this.jumpToBranchPoint(-1);
-		} else if (matchesKey(keyData, "right")) {
-			this.jumpToBranchPoint(1);
-		} else if (matchesSelectPageUp(keyData)) {
+		} else if (matchesSelectPageUp(keyData) || matchesKey(keyData, "left")) {
 			this.#selectedIndex = Math.max(0, this.#selectedIndex - this.maxVisibleLines);
-		} else if (matchesSelectPageDown(keyData)) {
+		} else if (matchesSelectPageDown(keyData) || matchesKey(keyData, "right")) {
 			this.#selectedIndex = Math.min(this.#filteredNodes.length - 1, this.#selectedIndex + this.maxVisibleLines);
 		} else if (
 			matchesKey(keyData, "shift+enter") ||

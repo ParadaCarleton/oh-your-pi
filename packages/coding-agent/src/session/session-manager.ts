@@ -3255,9 +3255,9 @@ export class SessionManager {
 		filePath: string,
 		sessionDir?: string,
 		storage: SessionStorage = new FileSessionStorage(),
-		options?: { initialCwd?: string; suppressBreadcrumb?: boolean },
+		options?: { initialCwd?: string; suppressBreadcrumb?: boolean; loadedSession?: SessionLoadResult },
 	): Promise<SessionManager> {
-		const loaded = await loadSessionFile(filePath, storage);
+		const loaded = options?.loadedSession ?? (await loadSessionFile(filePath, storage));
 		const header = loaded.entries.find(entry => entry.type === "session") as SessionHeader | undefined;
 		// Resume into the session's recorded cwd only when it is verifiably
 		// accessible. A deleted or permission-blocked (macOS TCC denial) project

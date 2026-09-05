@@ -1558,9 +1558,6 @@ export class SelectorController {
 					}
 
 					try {
-						// Revealed archived rows are selectable, but the active branch must
-						// never remain hidden after navigation.
-						if (archivedRoot) await this.ctx.session.restoreArchived(entryId);
 						let result = await this.ctx.session.navigateTree(entryId, {
 							summarize: wantsSummary,
 							customInstructions,
@@ -1594,6 +1591,8 @@ export class SelectorController {
 							this.ctx.showStatus("Navigation cancelled");
 							return;
 						}
+						// Restore every archive covering the committed branch.
+						if (archivedRoot) await this.ctx.session.restoreArchived(entryId);
 
 						// Update UI — rebuild the display transcript for the new leaf (the
 						// context from navigateTree is the LLM context, not the transcript).

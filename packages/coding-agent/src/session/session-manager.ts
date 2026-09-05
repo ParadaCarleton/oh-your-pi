@@ -526,6 +526,8 @@ export class SessionManager {
 	 * in-memory (pre-blob-externalization) entry, so inline images survive.
 	 */
 	onEntryAppended?: (entry: SessionEntry) => void;
+	/** Collab replication tap for destructive journal replacement. */
+	onEntriesReplaced?: () => void;
 
 	#turnBudgetTotal: number | null = null;
 	#turnBudgetHard = false;
@@ -1116,6 +1118,14 @@ export class SessionManager {
 			} catch (err) {
 				logger.warn("collab entry hook failed", { error: String(err) });
 			}
+		}
+	}
+
+	#notifyEntriesReplaced(): void {
+		try {
+			this.onEntriesReplaced?.();
+		} catch (err) {
+			logger.warn("collab replacement hook failed", { error: String(err) });
 		}
 	}
 
@@ -2788,6 +2798,7 @@ export class SessionManager {
 			this.#rewriteRequired = true;
 			this.#atomicRewriteDirty = true;
 			await this.#rewriteAtomically();
+			this.#notifyEntriesReplaced();
 		}
 
 		return prunedCount;

@@ -53,6 +53,7 @@
 - Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, branched-session copying, continued navigation, and leak-free exports.
 - Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, branched-session copying, committed navigation, and efficient leak-free exports.
 - Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, branched-session copying, committed navigation, collaboration replicas, and efficient leak-free exports.
+- Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, branched-session copying, committed navigation, live collaboration resynchronization, and efficient leak-free exports.
 
 ## [18.1.11] - 2026-09-05
 

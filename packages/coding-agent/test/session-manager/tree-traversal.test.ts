@@ -508,6 +508,22 @@ describe("createBranchedSession", () => {
 });
 
 describe("pruneEmptyBranches", () => {
+	it("notifies replication after destructive pruning replaces the journal", async () => {
+		const session = SessionManager.inMemory();
+		const rootId = session.appendMessage(userMsg("root"));
+		const activeId = session.appendMessage(assistantMsg("answer"));
+		session.branch(rootId);
+		const abandonedId = session.appendMessage(userMsg("unanswered"));
+		session.branch(activeId);
+
+		const snapshots: string[][] = [];
+		session.onEntriesReplaced = () => snapshots.push(session.getEntries().map(entry => entry.id));
+
+		expect(await session.pruneEmptyBranches()).toBe(1);
+		expect(snapshots).toEqual([[rootId, activeId]]);
+		expect(snapshots[0]).not.toContain(abandonedId);
+	});
+
 	it("prunes empty abandoned branches and keeps active path and branches with assistant messages", async () => {
 		const session = SessionManager.inMemory();
 

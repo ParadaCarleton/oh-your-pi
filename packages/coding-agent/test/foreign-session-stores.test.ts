@@ -156,6 +156,49 @@ describe("ClaudeSessionStore", () => {
 		expect(assistant.message.errorStatus).toBe(529);
 	});
 
+	it("lists an unindexed session at the cwd its transcript recorded", async () => {
+		const root = path.join(tempRoot, ".claude");
+		const cwd = path.join(tempRoot, "my-project.dir");
+		const id = "33333333-3333-4333-8333-333333333333";
+		// No history entry, and a directory name whose "-" separators are ambiguous.
+		await writeJsonl(path.join(root, "projects", cwd.replace(/[/\\._]/g, "-"), `${id}.jsonl`), [
+			{ type: "file-history-snapshot", timestamp: "2026-01-01T00:00:00.000Z" },
+			{
+				type: "user",
+				uuid: "u",
+				parentUuid: null,
+				timestamp: "2026-01-01T00:00:01.000Z",
+				cwd,
+				message: { content: "." },
+			},
+		]);
+
+		const info = (await new ClaudeSessionStore(root).list()).find(item => item.id === id);
+		expect(info?.cwd).toBe(cwd);
+	});
+
+	it("prefers the history index cwd over the transcript's", async () => {
+		const root = path.join(tempRoot, ".claude");
+		const indexedCwd = path.join(tempRoot, "indexed-project");
+		const id = "44444444-4444-4444-8444-444444444444";
+		await writeJsonl(path.join(root, "history.jsonl"), [
+			{ sessionId: id, timestamp: 1_767_225_600_000, display: ".", project: indexedCwd },
+		]);
+		await writeJsonl(path.join(root, "projects", indexedCwd.replaceAll(path.sep, "-"), `${id}.jsonl`), [
+			{
+				type: "user",
+				uuid: "u",
+				parentUuid: null,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				cwd: path.join(tempRoot, "somewhere-else"),
+				message: { content: "." },
+			},
+		]);
+
+		const info = (await new ClaudeSessionStore(root).list()).find(item => item.id === id);
+		expect(info?.cwd).toBe(indexedCwd);
+	});
+
 	it("uses current history metadata and converts linked messages in memory", async () => {
 		const { info, store } = await createClaudeFixture();
 
@@ -211,7 +254,7 @@ describe("ClaudeSessionStore", () => {
 		const root = path.join(tempRoot, "relocated-claude");
 		const cwd = path.join(tempRoot, "project-with-hyphen");
 		const id = "22222222-2222-4222-8222-333333333333";
-		const encoded = cwd.replaceAll(path.sep, "-");
+		const encoded = cwd.replace(/[/\\._]/g, "-");
 		process.env.CLAUDE_CONFIG_DIR = root;
 		await Bun.write(path.join(root, ".claude.json"), JSON.stringify({ projects: { [cwd]: {} } }));
 		await writeJsonl(path.join(root, "projects", encoded, `${id}.jsonl`), [

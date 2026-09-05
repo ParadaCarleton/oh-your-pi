@@ -53,4 +53,28 @@ describe("HTML export with archived branches", () => {
 		expect(data.leafId).toBe(idAnswered);
 		expect(data.entries.some(e => e.id === data.leafId)).toBe(true);
 	});
+
+	it("reparents visible turns appended after archive bookkeeping", async () => {
+		const { session, idRoot } = sessionWithAnEmptyBranch();
+		await session.archiveEmptyBranches();
+		const continuationId = session.appendMessage(userMsg("continue from the visible branch"));
+
+		const data = buildSessionData(session);
+		const continuation = data.entries.find(entry => entry.id === continuationId);
+		expect(continuation?.parentId).toBe(idRoot);
+		expect(data.leafId).toBe(continuationId);
+	});
+
+	it("omits labels whose targets are archived", async () => {
+		const { session, idAbandoned } = sessionWithAnEmptyBranch();
+		await session.archiveEmptyBranches();
+		const labelId = session.appendLabelChange(idAbandoned, "private branch label");
+
+		const hidden = buildSessionData(session);
+		expect(hidden.entries.map(entry => entry.id)).not.toContain(labelId);
+		expect(JSON.stringify(hidden)).not.toContain("private branch label");
+
+		const revealed = buildSessionData(session, undefined, { includeArchived: true });
+		expect(revealed.entries.map(entry => entry.id)).toContain(labelId);
+	});
 });

@@ -54,6 +54,7 @@ parking_lot.workspace = true
 pdf-inspector.workspace = true
 phf.workspace = true
 flume.workspace = true
+fatou-parser.workspace = true
 pi-ast.workspace = true
 pi-diff.workspace = true
 pi-edit.workspace = true

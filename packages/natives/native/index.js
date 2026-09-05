@@ -85,6 +85,7 @@ export const isoProbe = nativeBindings.isoProbe;
 export const isoResolve = nativeBindings.isoResolve;
 export const isoStart = nativeBindings.isoStart;
 export const isoStop = nativeBindings.isoStop;
+export const juliaSyntaxMatches = nativeBindings.juliaSyntaxMatches;
 export const listWorkspace = nativeBindings.listWorkspace;
 export const macOSAutocorrectWord = nativeBindings.macOSAutocorrectWord;
 export const macOSCheckSpelling = nativeBindings.macOSCheckSpelling;

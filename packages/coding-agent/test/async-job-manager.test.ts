@@ -624,6 +624,29 @@ describe("AsyncJobManager", () => {
 		expect(delivered).toEqual([jobId]);
 	});
 
+	test("overlapping waits do not requeue a result already consumed by one waiter", async () => {
+		const delivered: string[] = [];
+		const manager = new AsyncJobManager({
+			onJobComplete: async jobId => {
+				delivered.push(jobId);
+			},
+		});
+
+		const jobId = manager.register("task", "reported-by-one-wait", async () => "done");
+		manager.watchJobs([jobId]);
+		manager.watchJobs([jobId]);
+		await manager.waitForAll();
+
+		manager.consumeJobResults([jobId]);
+		manager.unwatchJobs([jobId]);
+		manager.resumeDeliveries([jobId]);
+		manager.unwatchJobs([jobId]);
+		await manager.drainDeliveries({ timeoutMs: 200 });
+
+		expect(delivered).toEqual([]);
+		expect(manager.isJobResultConsumed(jobId)).toBe(true);
+	});
+
 	test("dispose clears jobs and pending deliveries", async () => {
 		const manager = new AsyncJobManager({
 			onJobComplete: async () => {

@@ -37,9 +37,9 @@ import {
 import { framedBlock, renderStatusLine } from "../tui";
 import { repairDoubleEncodedJsonString } from "./repair-args";
 import { subprocessToolRegistry } from "./subprocess-tool-registry";
+import { isTaskToolDetails } from "./tool-details";
 import {
 	type AgentProgress,
-	isTaskToolDetails,
 	type SingleResult,
 	type TaskItem,
 	type TaskParams,

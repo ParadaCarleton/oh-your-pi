@@ -1054,7 +1054,7 @@ export class VibeSessionRegistry {
 		}
 
 		const settled = collectSettled();
-		manager.acknowledgeDeliveries(settled.map(entry => entry.jobId));
+		manager.consumeJobResults(settled.map(entry => entry.jobId));
 		// Release the claim on anything this wait did not report, so a job that
 		// settled too late to collect still auto-delivers.
 		const reported = new Set(settled.map(entry => entry.jobId));

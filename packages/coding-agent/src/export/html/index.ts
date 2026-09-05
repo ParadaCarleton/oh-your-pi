@@ -4,7 +4,7 @@ import type { AgentState } from "@oh-my-pi/pi-agent-core";
 import { APP_NAME, isEnoent } from "@oh-my-pi/pi-utils";
 import { getResolvedThemeColors, getThemeExportColors } from "../../modes/theme/theme";
 import type { SessionEntry, SessionHeader } from "../../session/session-entries";
-import { loadEntriesFromFile } from "../../session/session-loader";
+import { loadSessionFile } from "../../session/session-loader";
 import { SessionManager } from "../../session/session-manager";
 import { isTaskToolDetails } from "../../task/tool-details";
 import type { ExportThemeNames } from "./args";
@@ -300,11 +300,13 @@ async function collectSubSessionsFromDir(
 		const agentId = name.slice(0, -6);
 		if (referencedAgentIds && !referencedAgentIds.has(agentId)) continue;
 		const key = parentKey ? `${parentKey}/${agentId}` : agentId;
-		const fileEntries = await loadEntriesFromFile(path.join(dir, name));
+		const sessionPath = path.join(dir, name);
+		const loaded = await loadSessionFile(sessionPath);
 		// Empty/corrupt files (no valid session header) load as [] — skip silently.
-		if (fileEntries.length > 0) {
-			const subSession = await SessionManager.open(path.join(dir, name), undefined, undefined, {
+		if (loaded.entries.length > 0) {
+			const subSession = await SessionManager.open(sessionPath, undefined, undefined, {
 				suppressBreadcrumb: true,
+				loadedSession: loaded,
 			});
 			try {
 				const data = buildSessionData(subSession, undefined, { includeArchived });

@@ -188,7 +188,7 @@ describe("SelectorController.showTreeSelector re-answering the active ask leaf",
 		expect(showStatus).toHaveBeenCalledWith("Re-answer cancelled");
 	});
 
-	it("restores a revealed archived row before navigating to it", async () => {
+	it("restores a revealed archived row after navigating to it", async () => {
 		const entry = plainUserEntry("archived-entry");
 		const { ctx, editorContainer, navigateTree, restoreArchived, showStatus, order } = createCtx(
 			entry,
@@ -202,7 +202,7 @@ describe("SelectorController.showTreeSelector re-answering the active ask leaf",
 
 		expect(restoreArchived).toHaveBeenCalledWith(entry.id);
 		expect(navigateTree).toHaveBeenCalledWith(entry.id, expect.objectContaining({ allowAskReopen: true }));
-		expect(order.slice(0, 2)).toEqual(["restore", "navigate"]);
+		expect(order.slice(0, 2)).toEqual(["navigate", "restore"]);
 		expect(showStatus).not.toHaveBeenCalledWith("Already at this point");
 	});
 

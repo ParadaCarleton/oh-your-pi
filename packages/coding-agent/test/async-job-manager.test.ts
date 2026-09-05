@@ -602,6 +602,28 @@ describe("AsyncJobManager", () => {
 		expect(delivered).toEqual([]);
 	});
 
+	test("unwatchJobs waits for the final overlapping watcher before delivering", async () => {
+		const delivered: string[] = [];
+		const manager = new AsyncJobManager({
+			onJobComplete: async jobId => {
+				delivered.push(jobId);
+			},
+		});
+
+		const jobId = manager.register("task", "overlapping-watches", async () => "done");
+		manager.watchJobs([jobId]);
+		manager.watchJobs([jobId]);
+		await manager.waitForAll();
+
+		manager.unwatchJobs([jobId]);
+		await manager.drainDeliveries({ timeoutMs: 200 });
+		expect(delivered).toEqual([]);
+
+		manager.unwatchJobs([jobId]);
+		await manager.drainDeliveries({ timeoutMs: 200 });
+		expect(delivered).toEqual([jobId]);
+	});
+
 	test("dispose clears jobs and pending deliveries", async () => {
 		const manager = new AsyncJobManager({
 			onJobComplete: async () => {

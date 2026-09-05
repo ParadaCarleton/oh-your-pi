@@ -200,7 +200,7 @@ describe("SelectorController.showTreeSelector re-answering the active ask leaf",
 		controller.showTreeSelector({ includeArchived: true });
 		await pickEntry(editorContainer, entry.id);
 
-		expect(restoreArchived).toHaveBeenCalledWith("archived-root");
+		expect(restoreArchived).toHaveBeenCalledWith(entry.id);
 		expect(navigateTree).toHaveBeenCalledWith(entry.id, expect.objectContaining({ allowAskReopen: true }));
 		expect(order.slice(0, 2)).toEqual(["restore", "navigate"]);
 		expect(showStatus).not.toHaveBeenCalledWith("Already at this point");

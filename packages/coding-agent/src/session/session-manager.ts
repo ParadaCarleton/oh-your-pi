@@ -2684,16 +2684,21 @@ export class SessionManager {
 
 	/** The archived root hiding an entry, including the entry itself. */
 	getArchivedRootId(entryId: string): string | undefined {
+		return this.#archivedRootIdsForEntry(entryId)[0];
+	}
+
+	/** Every archived root hiding an entry, ordered outermost to innermost. */
+	#archivedRootIdsForEntry(entryId: string): string[] {
 		const archived = this.#index.archivedRootIds();
 		const seen = new Set<string>();
-		let root: string | undefined;
+		const roots: string[] = [];
 		let entry = this.#index.get(entryId);
 		while (entry && !seen.has(entry.id)) {
-			if (archived.has(entry.id)) root = entry.id;
+			if (archived.has(entry.id)) roots.push(entry.id);
 			seen.add(entry.id);
 			entry = entry.parentId ? this.#index.get(entry.parentId) : undefined;
 		}
-		return root;
+		return roots.reverse();
 	}
 
 	/** Every entry an archive record hides: the archived roots and all below them. */
@@ -2831,12 +2836,12 @@ export class SessionManager {
 	}
 
 	/**
-	 * Bring archived branches back into view. Pass a root id to restore one,
-	 * nothing to restore them all. Returns the number of branches revealed.
+	 * Bring archived branches back into view. Pass an entry id to restore every
+	 * archived root covering it, or nothing to restore them all. Returns the
+	 * number of branches revealed.
 	 */
 	async restoreArchived(targetId?: string): Promise<number> {
-		const archivedRoot = targetId ? this.getArchivedRootId(targetId) : undefined;
-		const targets = targetId ? (archivedRoot ? [archivedRoot] : []) : [...this.#index.archivedRootIds()];
+		const targets = targetId ? this.#archivedRootIdsForEntry(targetId) : [...this.#index.archivedRootIds()];
 		const restored = targets.filter(id => this.#index.archivedRootIds().has(id));
 		for (const id of restored) {
 			const entry: ArchiveEntry = { type: "archive", ...this.#freshEntryFields(), targetId: id, archived: false };
@@ -2875,8 +2880,8 @@ export class SessionManager {
 		const isToolResult = (entry: SessionEntry): boolean =>
 			entry.type === "message" && entry.message.role === "toolResult";
 
-		const kept = new Set<string>();
-		for (const entry of this.getBranch()) kept.add(entry.id);
+		const activePath = new Set(this.getBranch().map(entry => entry.id));
+		const kept = new Set(activePath);
 		// Retain the visible ancestry archived roots need when restored.
 		for (const archivedRoot of this.#index.archivedRootIds()) {
 			let entry = this.#index.get(archivedRoot);
@@ -2934,6 +2939,7 @@ export class SessionManager {
 		for (const entry of this.#entries) {
 			if (entry.type !== "label" && entry.type !== "archive") continue;
 			if (targetSurvives(entry.targetId)) kept.add(entry.id);
+			else if (entry.type === "archive" && activePath.has(entry.id)) kept.add(entry.id);
 			else kept.delete(entry.id);
 		}
 

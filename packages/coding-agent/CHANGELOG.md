@@ -27,6 +27,11 @@
 
 - Fixed edit and write results to report the formatted bytes actually committed by LSP writethrough.
 
+### Added
+
+- Added `/prune` to archive conversation branches with no completed assistant reply, with `/prune delete` available for permanent removal.
+- Added `/unarchive` and tree controls for revealing, archiving, and restoring branches; exports and shares omit archived content by default.
+
 ### Changed
 
 - Ranged reads of text without bracket characters skip unnecessary lexical context scanning.
@@ -40,6 +45,7 @@
 - `memory://` now resolves against the session that issued it: a caller's own memory backend answers `memory://<id>`, so co-located sessions no longer read each other's memory rows, and a caller whose session is no longer live fails closed instead of being answered by a peer. Prompt completion binds to the same caller, so `memory://<memory-id>` stays on offer while a subagent shares the working directory. Advisors retain their owning session's memory access even without a session file.
 - Fullscreen `/copy` now opens on the recent tail of the branch instead of replaying the whole session, so it appears immediately and steps without lag on long sessions (`a` loads the earlier turns). Both it and the esc-esc rewind selector also cache each transcript row set instead of re-stripping it every frame.
 - Fixed the fullscreen `/copy` and esc-esc rewind selectors repainting the whole frame for a wheel notch that cannot move the viewport; because both open scrolled to the newest turn, wheeling down there made the frame twitch.
+- Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, and continued navigation.
 
 ## [18.1.11] - 2026-09-05
 
@@ -1251,16 +1257,6 @@
 - Fixed `/handoff` losing local artifacts (plans, scratch files, research notes) by copying them across the handoff session boundary.
 - Replaced libarchive-based tar parsing with a hardened, in-process tar reader to prevent crashes and safely handle complex archive structures, symlinks, and sparse metadata.
 - Fixed `Ctrl+O` tool-output expansion failing to reach launch-completion messages wrapped in the hidden tool activity container.
-### Added
-
-- Added a `/prune` slash command that deletes conversation branches with nothing to read in them: an entry survives only if an answered assistant reply sits at or below it, so unanswered prompts, replies that errored or were aborted, replies left waiting on a tool call that never came back, and the tool traffic under them all go. The active branch is always kept intact.
-- `/prune` now hides empty branches instead of deleting them. An archive record is appended to the session file, the branch stays on disk byte for byte, and the tree, HTML exports (including embedded subagent transcripts), and `/share` stop offering it. `/prune delete` is the old destructive behavior, now opt-in, and archiving a branch also shields it from it.
-- Added `/unarchive` to bring hidden branches back: `/unarchive` restores them all, `/unarchive <branch id>` restores one, and `/unarchive list` shows what is hidden.
-- Added archiving from the `/tree` selector: `Shift+A` hides the highlighted branch whether or not it is empty, `Alt+R` reveals archived branches in place, and selecting or pressing `Shift+A` on a revealed branch restores it.
-
-### Fixed
-
-- `/prune delete` now preserves the conversation ancestry needed by archived branches and removes labels together with deleted targets.
 
 ## [17.2.14] - 2026-08-11
 

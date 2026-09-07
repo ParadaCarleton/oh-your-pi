@@ -102,6 +102,54 @@ function isWireAgentEvent(event: AgentSessionEvent): event is AgentSessionEvent 
 function isWireSessionEntry(entry: StoredSessionEntry): entry is StoredSessionEntry & WireSessionEntry {
 	return entry.type in WIRE_SESSION_ENTRY_TYPES;
 }
+
+/**
+ * Keep archived content private even when its root is local-only metadata that
+ * the collaboration protocol cannot represent. A guest cannot traverse from a
+ * missing root to its descendants, so omit that whole subtree and its dangling
+ * archive records instead of sending content the guest cannot know is hidden.
+ */
+function projectSnapshotEntries(entries: StoredSessionEntry[]): (StoredSessionEntry & WireSessionEntry)[] {
+	const byId = new Map(entries.map(entry => [entry.id, entry]));
+	const archiveState = new Map<string, boolean>();
+	for (const entry of entries) {
+		if (entry.type === "archive") archiveState.set(entry.targetId, entry.archived);
+	}
+
+	const opaqueArchivedRoots = new Set<string>();
+	for (const [targetId, archived] of archiveState) {
+		if (!archived) continue;
+		const target = byId.get(targetId);
+		if (target && !isWireSessionEntry(target)) opaqueArchivedRoots.add(targetId);
+	}
+
+	const children = new Map<string, string[]>();
+	for (const entry of entries) {
+		if (!entry.parentId) continue;
+		const siblings = children.get(entry.parentId);
+		if (siblings) siblings.push(entry.id);
+		else children.set(entry.parentId, [entry.id]);
+	}
+	const hidden = new Set<string>();
+	const stack = [...opaqueArchivedRoots];
+	while (stack.length > 0) {
+		const id = stack.pop() as string;
+		if (hidden.has(id)) continue;
+		hidden.add(id);
+		for (const childId of children.get(id) ?? []) stack.push(childId);
+	}
+
+	const projected: (StoredSessionEntry & WireSessionEntry)[] = [];
+	for (const entry of entries) {
+		if (!isWireSessionEntry(entry) || hidden.has(entry.id)) continue;
+		if (entry.type === "archive") {
+			const target = byId.get(entry.targetId);
+			if (!target || !isWireSessionEntry(target) || hidden.has(entry.targetId)) continue;
+		}
+		projected.push(entry);
+	}
+	return projected;
+}
 const CONNECT_TIMEOUT_MS = 15_000;
 /** Max bytes served per fetch-transcript reply (guest re-requests from `newSize`). */
 export const TRANSCRIPT_READ_CAP = 4 * 1024 * 1024;
@@ -287,7 +335,16 @@ export class CollabHost {
 		}
 		this.#registryUnsubscribe = AgentRegistry.global().onChange(() => this.#scheduleAgentsBroadcast());
 		this.#ctx.sessionManager.onEntryAppended = entry => {
-			if (isWireSessionEntry(entry)) this.#broadcast({ t: "entry", entry: shrinkForReplication(entry) });
+			if (entry.type === "archive") {
+				const target = this.#ctx.sessionManager.getEntry(entry.targetId);
+				if (!target || !isWireSessionEntry(target)) {
+					for (const [peerId, peer] of this.#peers) this.#sendSnapshot(peerId, peer.canWrite);
+				} else {
+					this.#broadcast({ t: "entry", entry: shrinkForReplication(entry) });
+				}
+			} else if (isWireSessionEntry(entry)) {
+				this.#broadcast({ t: "entry", entry: shrinkForReplication(entry) });
+			}
 			// Model/thinking/title changes land as entries while idle; refresh
 			// guest state promptly (debounce + JSON diff dedupe).
 			this.#scheduleStateBroadcast();
@@ -415,7 +472,7 @@ export class CollabHost {
 			}
 			logger.info("collab welcome exceeded size threshold; stripped images", { stripped });
 		}
-		const entries = snapshot.entries.filter(isWireSessionEntry);
+		const entries = projectSnapshotEntries(snapshot.entries);
 		const socket = this.#socket;
 		if (!socket) return;
 		socket.send(

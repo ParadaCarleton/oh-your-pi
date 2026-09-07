@@ -856,6 +856,32 @@ describe("pruneEmptyBranches", () => {
 		expect(ids).not.toContain(idAbandoned);
 	});
 
+	it("reopens on the branch selected before destructive pruning", async () => {
+		using tempDir = TempDir.createSync("@pi-session-prune-leaf-");
+		const session = SessionManager.create(tempDir.path(), tempDir.path());
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idSelectedPrompt = session.appendMessage(userMsg("selected branch"));
+		const idSelectedReply = session.appendMessage(assistantMsg("selected answer"));
+		session.branch(idRoot);
+		const idLaterPrompt = session.appendMessage(userMsg("later branch"));
+		const idLaterReply = session.appendMessage(assistantMsg("later answer"));
+		session.branch(idRoot);
+		session.appendMessage(userMsg("abandoned branch"));
+		session.branch(idSelectedReply);
+		await session.flush();
+
+		expect(await session.pruneEmptyBranches()).toBe(1);
+		const selectedBranch = session.getBranch().map(entry => entry.id);
+		expect(selectedBranch).toContain(idSelectedPrompt);
+		expect(selectedBranch).not.toContain(idLaterPrompt);
+		expect(selectedBranch).not.toContain(idLaterReply);
+
+		const reloaded = await SessionManager.open(session.getSessionFile() as string);
+		expect(reloaded.getBranch().map(entry => entry.id)).toEqual(selectedBranch);
+		const continuationId = reloaded.appendMessage(userMsg("continue selected branch"));
+		expect(reloaded.getEntry(continuationId)?.parentId).toBe(selectedBranch.at(-1));
+	});
+
 	it("preserves the ancestors needed to restore an archived branch", async () => {
 		const session = SessionManager.inMemory();
 		const idRoot = session.appendMessage(userMsg("root"));

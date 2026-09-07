@@ -80,7 +80,7 @@ const SNAPSHOT_PROGRESS_TIMEOUT_MS = 30_000;
  * rows; the last record for each target wins, and an archived root hides its
  * complete descendant subtree until a later restore record arrives.
  */
-function visibleTranscriptEntries(entries: readonly SessionEntry[]): readonly SessionEntry[] {
+export function visibleTranscriptEntries(entries: readonly SessionEntry[]): readonly SessionEntry[] {
 	const archivedRoots = new Set<string>();
 	const children = new Map<string | null, string[]>();
 	for (const entry of entries) {

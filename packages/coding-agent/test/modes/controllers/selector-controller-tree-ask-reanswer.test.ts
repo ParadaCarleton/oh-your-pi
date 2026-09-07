@@ -188,7 +188,7 @@ describe("SelectorController.showTreeSelector re-answering the active ask leaf",
 		expect(showStatus).toHaveBeenCalledWith("Re-answer cancelled");
 	});
 
-	it("restores a revealed archived row after navigating to it", async () => {
+	it("leaves restoration of a revealed archived row to the shared navigation API", async () => {
 		const entry = plainUserEntry("archived-entry");
 		const { ctx, editorContainer, navigateTree, restoreArchived, showStatus, order } = createCtx(
 			entry,
@@ -200,9 +200,9 @@ describe("SelectorController.showTreeSelector re-answering the active ask leaf",
 		controller.showTreeSelector({ includeArchived: true });
 		await pickEntry(editorContainer, entry.id);
 
-		expect(restoreArchived).toHaveBeenCalledWith(entry.id);
+		expect(restoreArchived).not.toHaveBeenCalled();
 		expect(navigateTree).toHaveBeenCalledWith(entry.id, expect.objectContaining({ allowAskReopen: true }));
-		expect(order.slice(0, 2)).toEqual(["navigate", "restore"]);
+		expect(order[0]).toBe("navigate");
 		expect(showStatus).not.toHaveBeenCalledWith("Already at this point");
 	});
 

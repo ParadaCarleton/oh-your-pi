@@ -1140,6 +1140,21 @@ describe("archiveBranch", () => {
 		await expect(session.archiveBranch("nope")).rejects.toThrow(/No entry nope/);
 	});
 
+	it("bounds traversal when a malformed archived branch contains a parent cycle", async () => {
+		const { session, idAsst, idOther, idOtherAsst } = buildTwoAnsweredBranches();
+		const activeId = session.appendMessageToBranch(userMsg("active continuation"), idAsst);
+		const snapshot = session.captureState();
+		const cyclic = snapshot.entries.find(entry => entry.id === idOther);
+		if (!cyclic) throw new Error("expected branch entry");
+		cyclic.parentId = idOther;
+		session.restoreState(snapshot);
+		session.branch(activeId);
+
+		expect(await session.archiveBranch(idOther)).toBe(2);
+		expect(session.getArchivedRootIds()).toEqual([idOther]);
+		expect(session.getArchivedEntryIds()).toEqual(new Set([idOther, idOtherAsst]));
+	});
+
 	it("archives once: a second call adds no record", async () => {
 		const { session, idOther } = buildTwoAnsweredBranches();
 		await session.archiveBranch(idOther);

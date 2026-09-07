@@ -50,32 +50,26 @@ type ShowHookSelector = (title: string, options: string[]) => Promise<string | u
 
 interface TreeSummaryHarness {
 	controller: SelectorController;
-	events: string[];
 	navigateTree: Mock<NavigateTree>;
 	navigation: Promise<void>;
 	selector(): { handleInput(key: string): void };
 	showHookSelector: Mock<ShowHookSelector>;
 }
 
-function createHarness(
-	summaryChoice = "No summary",
-	options?: { archivedRoot?: string; navigateResult?: { aborted?: boolean; cancelled: boolean } },
-): TreeSummaryHarness {
+function createHarness(summaryChoice = "No summary"): TreeSummaryHarness {
 	const navigation = Promise.withResolvers<void>();
-	const events: string[] = [];
 	const root = userNode("root", null, "Root prompt");
 	const showHookSelector = vi.fn<ShowHookSelector>(async () => summaryChoice);
 	const navigateTree = vi.fn<NavigateTree>(async () => {
-		events.push("navigate");
 		navigation.resolve();
-		return options?.navigateResult ?? { cancelled: false };
+		return { cancelled: false };
 	});
 	let selector: { handleInput(key: string): void } | undefined;
 	const ctx = {
 		sessionManager: {
 			getTree: () => [root],
 			getLeafId: () => null,
-			getArchivedRootId: () => options?.archivedRoot,
+			getArchivedRootId: () => undefined,
 			appendLabelChange: vi.fn(),
 		},
 		ui: {
@@ -106,10 +100,7 @@ function createHarness(
 		reloadTodos: vi.fn(async () => {}),
 		session: {
 			navigateTree,
-			restoreArchived: vi.fn(async () => {
-				events.push("restore");
-				return 1;
-			}),
+			restoreArchived: vi.fn(async () => 1),
 			abortBranchSummary: vi.fn(),
 		},
 	} as unknown as InteractiveModeContext;
@@ -120,7 +111,6 @@ function createHarness(
 	};
 	return {
 		controller,
-		events,
 		navigateTree,
 		navigation: navigation.promise,
 		selector: () => {
@@ -196,30 +186,5 @@ describe("SelectorController tree branch summaries", () => {
 			customInstructions: undefined,
 			allowAskReopen: true,
 		});
-	});
-
-	it("restores an archived branch only after navigation commits", async () => {
-		const harness = createHarness("No summary", { archivedRoot: "root" });
-
-		harness.controller.showTreeSelector({ includeArchived: true });
-		harness.selector().handleInput("\r");
-		await harness.navigation;
-		await Bun.sleep(0);
-
-		expect(harness.events).toEqual(["navigate", "restore"]);
-	});
-
-	it("keeps an archived branch hidden when navigation is cancelled", async () => {
-		const harness = createHarness("No summary", {
-			archivedRoot: "root",
-			navigateResult: { cancelled: true },
-		});
-
-		harness.controller.showTreeSelector({ includeArchived: true });
-		harness.selector().handleInput("\r");
-		await harness.navigation;
-		await Bun.sleep(0);
-
-		expect(harness.events).toEqual(["navigate"]);
 	});
 });

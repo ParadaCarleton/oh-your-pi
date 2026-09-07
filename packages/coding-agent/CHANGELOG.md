@@ -13,7 +13,7 @@
 
 ### Fixed
 
-- Archived branches retain the ancestry, selected branch, and active bookkeeping needed for cycle-safe pruning and branching, nested restoration from every navigation API, authoritative live collaboration resynchronization, and efficient leak-free exports.
+- Archived branches retain the ancestry, selected branch, and active bookkeeping needed for cycle-safe pruning and branching, nested restoration from every navigation API, privacy-safe live collaboration resynchronization, and efficient leak-free exports.
 
 ## [18.1.14] - 2026-09-07
 

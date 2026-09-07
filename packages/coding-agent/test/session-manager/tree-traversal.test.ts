@@ -505,6 +505,28 @@ describe("createBranchedSession", () => {
 		expect(session.getEntry(idContinuation)?.parentId).toBe(idAnswered);
 		expect(session.getBranch().map(entry => entry.id)).toEqual([idRoot, idAnswered, idContinuation]);
 	});
+
+	it("bounds retained-parent repair when filtered metadata forms a cycle", () => {
+		const session = SessionManager.inMemory();
+		const targetId = session.appendMessage(userMsg("label target"));
+		const firstLabelId = session.appendLabelChange(targetId, "first");
+		const secondLabelId = session.appendLabelChange(targetId, "second");
+		const leafId = session.appendMessage(assistantMsg("selected leaf"));
+		const snapshot = session.captureState();
+		const firstLabel = snapshot.entries.find(entry => entry.id === firstLabelId);
+		const secondLabel = snapshot.entries.find(entry => entry.id === secondLabelId);
+		const leaf = snapshot.entries.find(entry => entry.id === leafId);
+		if (!firstLabel || !secondLabel || !leaf) throw new Error("expected cyclic branch fixtures");
+		firstLabel.parentId = secondLabelId;
+		secondLabel.parentId = firstLabelId;
+		leaf.parentId = firstLabelId;
+		session.restoreState(snapshot);
+
+		session.createBranchedSession(leafId);
+
+		expect(session.getEntries().map(entry => entry.id)).toEqual([leafId]);
+		expect(session.getEntry(leafId)?.parentId).toBeNull();
+	});
 });
 
 describe("pruneEmptyBranches", () => {
@@ -934,6 +956,26 @@ describe("pruneEmptyBranches", () => {
 		expect(session.getBranch().map(entry => entry.id)).toEqual([idRoot, idAsst, idContinuation]);
 		const nextId = session.appendMessage(userMsg("keep going"));
 		expect(session.getEntry(nextId)?.parentId).toBe(idContinuation);
+	});
+
+	it("bounds surviving-parent repair when a removed parent points to itself", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idActive = session.appendMessage(assistantMsg("answer"));
+		session.branch(idRoot);
+		const idCyclic = session.appendMessage(userMsg("abandoned cycle"));
+		const snapshot = session.captureState();
+		const cyclic = snapshot.entries.find(entry => entry.id === idCyclic);
+		if (!cyclic) throw new Error("expected cyclic prune fixture");
+		cyclic.parentId = idCyclic;
+		session.restoreState(snapshot);
+		session.branch(idCyclic);
+		const labelId = session.appendLabelChange(idActive, "retained label");
+		session.branch(idActive);
+
+		expect(await session.pruneEmptyBranches()).toBe(1);
+		expect(session.getEntry(idCyclic)).toBeUndefined();
+		expect(session.getEntry(labelId)?.parentId).toBeNull();
 	});
 });
 

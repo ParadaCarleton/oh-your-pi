@@ -2763,7 +2763,13 @@ export class SessionManager {
 		const survivingParentOf = (entryId: string): string | null => {
 			let parentId = this.#index.get(entryId)?.parentId ?? null;
 			const traversed: string[] = [];
+			const seen = new Set<string>();
 			while (parentId && !survivingIds.has(parentId)) {
+				if (seen.has(parentId)) {
+					parentId = null;
+					break;
+				}
+				seen.add(parentId);
 				if (survivingParentCache.has(parentId)) {
 					parentId = survivingParentCache.get(parentId) ?? null;
 					break;
@@ -3082,7 +3088,12 @@ export class SessionManager {
 		const retainedIds = new Set(retainedPath.map(entry => entry.id));
 		const parentById = new Map(branchPath.map(entry => [entry.id, entry.parentId]));
 		const nearestRetainedParent = (parentId: string | null): string | null => {
-			while (parentId && !retainedIds.has(parentId)) parentId = parentById.get(parentId) ?? null;
+			const seen = new Set<string>();
+			while (parentId && !retainedIds.has(parentId)) {
+				if (seen.has(parentId)) return null;
+				seen.add(parentId);
+				parentId = parentById.get(parentId) ?? null;
+			}
 			return parentId;
 		};
 		const entriesToKeep = retainedPath.map(entry => {

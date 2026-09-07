@@ -95,6 +95,7 @@ import { recordSessionTitle } from "./title-index";
 const JSONL_SUFFIX_LENGTH = ".jsonl".length;
 const DRAFT_ONLY_SESSION_MARKER = ".draft-only-session";
 const DISCARDED_ENTRY_BRANCH_MARKER = "discarded-entry-branch";
+const PRUNED_BRANCH_MARKER = "pruned-empty-branches";
 
 function mintSessionId(): string {
 	return Bun.randomUUIDv7();
@@ -2791,6 +2792,12 @@ export class SessionManager {
 
 		const prunedCount = oldLength - this.#entries.length;
 		if (prunedCount > 0) {
+			// Rebuild selects the last physical entry, which may belong to another
+			// retained branch. Record the chosen path at the end of the rewritten
+			// journal so reopening lands on the same branch.
+			if ((this.#entries.at(-1)?.id ?? null) !== survivingLeafId) {
+				this.branchWithSummary(survivingLeafId, "", { kind: PRUNED_BRANCH_MARKER });
+			}
 			// Deleting entries can only be published by rewriting the whole file:
 			// the append path never removes lines, and close() marks the file
 			// current without rewriting, so without this the prune would be lost

@@ -125,6 +125,16 @@ describe("GuestClient frame apply", () => {
 		]);
 	});
 
+	it("bounds archived-subtree projection for a malformed parent cycle", () => {
+		const cyclic = {
+			...messageEntry("cyclic", { role: "user", content: "hidden", timestamp: 1 }),
+			parentId: "cyclic",
+		};
+		const client = liveClient([cyclic, archiveEntry("archive-cyclic", cyclic.id, cyclic.id, true)]);
+
+		expect(client.getSnapshot().entries).toEqual([]);
+	});
+
 	it("welcome readOnly flag lands in the snapshot", () => {
 		const client = new GuestClient(LINK, "tester");
 		expect(client.getSnapshot().readOnly).toBe(false);

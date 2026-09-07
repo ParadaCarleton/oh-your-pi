@@ -1591,9 +1591,6 @@ export class SelectorController {
 							this.ctx.showStatus("Navigation cancelled");
 							return;
 						}
-						// Restore every archive covering the committed branch.
-						if (archivedRoot) await this.ctx.session.restoreArchived(entryId);
-
 						// Update UI — rebuild the display transcript for the new leaf (the
 						// context from navigateTree is the LLM context, not the transcript).
 						const fastRewind =

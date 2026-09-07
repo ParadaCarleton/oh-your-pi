@@ -2717,7 +2717,8 @@ export class SessionManager {
 		const stack = [...this.#index.archivedRootIds()];
 		while (stack.length > 0) {
 			const id = stack.pop() as string;
-			if (!hidden.add(id)) continue;
+			if (hidden.has(id)) continue;
+			hidden.add(id);
 			for (const child of this.#index.childrenOf(id)) stack.push(child.id);
 		}
 		return hidden;
@@ -2863,8 +2864,11 @@ export class SessionManager {
 
 		let entries = 0;
 		const stack = [targetId];
+		const seen = new Set<string>();
 		while (stack.length > 0) {
 			const id = stack.pop() as string;
+			if (seen.has(id)) continue;
+			seen.add(id);
 			entries++;
 			for (const child of this.#index.childrenOf(id)) stack.push(child.id);
 		}

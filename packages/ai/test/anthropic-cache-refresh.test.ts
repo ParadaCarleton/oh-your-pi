@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
-import { getPromptCacheColdAtMs, planPromptCacheWindow, streamSimple } from "@oh-my-pi/pi-ai";
+import { getPromptCacheColdAtMs, getPromptCacheExpiryMs, planPromptCacheWindow, streamSimple } from "@oh-my-pi/pi-ai";
 import type { CacheControlEphemeral, MessageCreateParams } from "@oh-my-pi/pi-ai/providers/anthropic-wire";
 import type { CacheRetention, Context, FetchImpl, Model, ProviderSessionState } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
@@ -246,7 +246,16 @@ describe("Anthropic prompt-cache refresh", () => {
 		await finishRequest(fetch, states);
 		// Full TTL plus every budgeted refresh: 5m + 3 x 4m45s.
 		const projected = getPromptCacheColdAtMs(states);
+		if (projected === undefined) throw new Error("Expected an armed cache refresh window");
 		expect(projected).toBe(Date.now() + 5 * 60_000 + 3 * CACHE_REFRESH_DELAY_MS);
+		expect(
+			getPromptCacheExpiryMs({
+				model,
+				cacheTouchedAtMs: Date.now(),
+				cacheRetention: "short",
+				providerSessionState: states,
+			}),
+		).toBe(projected);
 
 		// Each refresh consumes budget it was already counted for, so the
 		// projection must not drift — including after the last one, which stops

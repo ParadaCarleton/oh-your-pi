@@ -115,6 +115,7 @@ describe("EventController idle compaction teardown", () => {
 
 		expect(runIdleCompaction).not.toHaveBeenCalled();
 	});
+
 	it("emits an LLM-generated recap after the default four-minute delay", async () => {
 		resetSettingsForTest();
 		await Settings.init({

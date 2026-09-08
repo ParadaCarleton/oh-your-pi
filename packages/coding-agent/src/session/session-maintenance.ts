@@ -52,7 +52,7 @@ import type { ProtectedToolMatcher } from "@oh-my-pi/pi-agent-core/compaction/to
 import {
 	type AssistantMessage,
 	type CodexCompactionContext,
-	getPromptCacheColdAtMs,
+	getPromptCacheExpiryMs,
 	type Message,
 	type Model,
 	type ProviderSessionState,
@@ -97,6 +97,7 @@ import { getLatestCompactionEntry, getOpenAiRemoteCompactionPayload } from "./se
 import type { CompactionEntry, SessionEntry } from "./session-entries";
 import type { SessionManager } from "./session-manager";
 import type { ShakeMode, ShakeResult } from "./shake-types";
+import { resolveConfiguredCacheRetention } from "./settings-stream-fn";
 import { resolveSpeculationLeadTokens, SPECULATION_LEAD_MIN_TOKENS } from "./speculation-lead";
 
 export type CompactionCheckResult = Readonly<{
@@ -205,9 +206,6 @@ const PRUNE_CACHE_WARM_SUFFIX_TOKENS = 8_000;
  * still-warm prefix is busted by the flush. 90 min leaves margin over the 1h TTL.
  */
 const PRUNE_IDLE_FLUSH_MS = 90 * 60_000;
-
-/** ChatGPT's session prompt cache remains reusable for one hour after the last model turn. */
-const CHATGPT_PROMPT_CACHE_TTL_MS = 60 * 60_000;
 
 /**
  * Hysteresis band for the post-maintenance "did we actually create headroom?"
@@ -1231,11 +1229,12 @@ export class SessionMaintenance {
 			return lastAssistant.timestamp;
 		}
 
-		if (model.api === "openai-codex-responses") {
-			return lastAssistant.timestamp + CHATGPT_PROMPT_CACHE_TTL_MS;
-		}
-		if (model.api !== "anthropic-messages" || model.provider !== "anthropic") return undefined;
-		return getPromptCacheColdAtMs(this.#host.providerSessionState);
+		return getPromptCacheExpiryMs({
+			model,
+			cacheTouchedAtMs: lastAssistant.timestamp,
+			cacheRetention: resolveConfiguredCacheRetention(this.#host.settings),
+			providerSessionState: this.#host.providerSessionState,
+		});
 	}
 
 	/** Shake a cold reusable prefix immediately before its next user-authored turn. */

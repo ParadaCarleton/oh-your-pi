@@ -316,7 +316,7 @@ import {
 	type InterruptedThinkingDetails,
 	isEmptyErrorTurn,
 	isUserInterruptAbort,
-	isUserInvokedSkillPrompt,
+	isUserTurnInitiator,
 	logProviderTurnError,
 	normalizeCustomMessagePayload,
 	type PythonExecutionMessage,
@@ -707,6 +707,7 @@ export class AgentSession {
 	#modeExitDrainSuppressionDepth = 0;
 	#usagePreflightReadyForNextModelCall = false;
 	#usagePreflightReadyModel: Model | undefined;
+	#detachCacheExpiryBeforeQueueDequeue: (() => void) | undefined;
 	#detachUsageBeforeQueueDequeue: (() => void) | undefined;
 	#detachUsageBeforeModelCall: (() => void) | undefined;
 
@@ -1311,6 +1312,18 @@ export class AgentSession {
 			withBashBranchTransition: operation => this.#bash.withBranchTransition(operation),
 		};
 		this.#recovery = new TurnRecovery(recoveryHost, { initialRetryFallback: config.initialRetryFallback });
+		this.#detachCacheExpiryBeforeQueueDequeue = this.agent.addBeforeQueuedMessageDequeueHook(
+			async (signal, queue) => {
+				const queuedMessages =
+					queue === "steering" ? this.agent.peekSteeringQueue() : this.agent.peekFollowUpQueue();
+				const hasUserTurn = queuedMessages.some(
+					message => message.role === "user" || (message.role === "custom" && isUserTurnInitiator(message)),
+				);
+				if (!hasUserTurn) return;
+				await this.#maintenance.runCacheExpiredPrePromptShakeIfNeeded();
+				signal?.throwIfAborted();
+			},
+		);
 		this.#detachUsageBeforeQueueDequeue = this.agent.addBeforeQueuedMessageDequeueHook(async signal => {
 			if (
 				!this.settings.get("retry.usageAwareFallback") ||
@@ -4373,6 +4386,8 @@ export class AgentSession {
 		this.#modelDiscoveryAbortController.abort();
 		this.#queuedMessageDrainBlocked = false;
 		this.#usagePreflightReadyForNextModelCall = false;
+		this.#detachCacheExpiryBeforeQueueDequeue?.();
+		this.#detachCacheExpiryBeforeQueueDequeue = undefined;
 		this.#detachUsageBeforeQueueDequeue?.();
 		this.#detachUsageBeforeQueueDequeue = undefined;
 		this.#detachUsageBeforeModelCall?.();
@@ -5290,9 +5305,9 @@ export class AgentSession {
 		await this.#maintenance.runIdleCompaction();
 	}
 
-	/** Reclaim tokens mechanically while idle, for contexts below the compaction threshold. */
-	async runIdleShake(): Promise<ShakeResult | undefined> {
-		return await this.#maintenance.runIdleShake();
+	/** Epoch at which the active model's reusable prompt cache goes cold. */
+	promptCacheColdAtMs(): number | undefined {
+		return this.#maintenance.promptCacheColdAtMs();
 	}
 
 	/** Toggle automatic compaction. */
@@ -6298,6 +6313,11 @@ export class AgentSession {
 			) {
 				await this.#maintenance.checkCompaction(lastAssistant, false, false, false);
 			}
+			const isUserTurn = message.role === "user" || (message.role === "custom" && isUserTurnInitiator(message));
+			if (isUserTurn && !options?.skipCompactionCheck) {
+				await this.#maintenance.runCacheExpiredPrePromptShakeIfNeeded();
+				if (this.#promptGeneration !== generation) return false;
+			}
 
 			await this.#prewalk.armPlanYoloIfNeeded();
 
@@ -6422,7 +6442,6 @@ export class AgentSession {
 			// (developer roles), agent-originated or autoloaded skill injections, and
 			// non-auto sessions are skipped. Never blocks the turn — failures fall
 			// back to a concrete level inside the helper.
-			const isUserTurn = message.role === "user" || (message.role === "custom" && isUserInvokedSkillPrompt(message));
 			if (this.isAutoThinking && isUserTurn) {
 				await this.#models.applyAutoThinkingLevel(expandedText, generation);
 				if (this.#promptGeneration !== generation) {

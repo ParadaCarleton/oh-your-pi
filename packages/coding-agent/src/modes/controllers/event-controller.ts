@@ -1,4 +1,4 @@
-import { type AssistantMessage, getPromptCacheColdAtMs, type ImageContent } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, ImageContent } from "@oh-my-pi/pi-ai";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { getStreamingPartialJson } from "@oh-my-pi/pi-ai/utils/block-symbols";
 import { type Component, Loader, TERMINAL } from "@oh-my-pi/pi-tui";
@@ -26,7 +26,6 @@ import { getSymbolTheme, theme } from "../../modes/theme/theme";
 import type { InteractiveModeContext, TodoPhase } from "../../modes/types";
 import idleRecapPrompt from "../../prompts/system/recap-user.md" with { type: "text" };
 import type { AgentSessionEvent } from "../../session/agent-session";
-import { formatShakeSummary, type ShakeResult } from "../../session/shake-types";
 import {
 	isSilentAbort,
 	isUserInvokedSkillPrompt,
@@ -2305,7 +2304,7 @@ export class EventController {
 	 * and still reads from it.
 	 */
 	#idleCompactionDelayMs(): number {
-		const coldAtMs = getPromptCacheColdAtMs(this.ctx.viewSession.agent.providerSessionState);
+		const coldAtMs = this.ctx.viewSession.promptCacheColdAtMs();
 		if (coldAtMs === undefined) return IDLE_COMPACTION_FALLBACK_MS;
 		const leadMs = coldAtMs - IDLE_COMPACTION_CACHE_LEAD_MS - Date.now();
 		return Math.max(IDLE_COMPACTION_MIN_SECONDS * 1000, Math.min(IDLE_COMPACTION_MAX_SECONDS * 1000, leadMs));
@@ -2325,40 +2324,20 @@ export class EventController {
 
 		const threshold = idleSettings.idleThresholdTokens;
 		if (threshold <= 0) return;
+		if (this.#currentContextTokens() < threshold) return;
 
 		const timeoutMs = this.#idleCompactionDelayMs();
 		this.#idleCompactionTimer = setTimeout(() => {
 			this.#idleCompactionTimer = undefined;
-			// Re-check conditions before firing; the session may have moved on.
+			// Re-check conditions before firing; the session may have moved on or
+			// pruning may have dropped it below the idle-compaction threshold.
 			if (this.ctx.viewSession.isStreaming) return;
 			if (this.ctx.viewSession.isCompacting) return;
 			if (this.ctx.editor.getText().trim()) return;
-			// Below the threshold a summary costs more than it reclaims, so shake
-			// the context down mechanically instead.
-			if (this.#currentContextTokens() < threshold) {
-				void this.#runIdleShake();
-				return;
-			}
+			if (this.#currentContextTokens() < threshold) return;
 			void this.ctx.viewSession.runIdleCompaction();
 		}, timeoutMs);
 		this.#idleCompactionTimer.unref?.();
-	}
-
-	/** Run the idle shake and fold its rewrite into the transcript. */
-	async #runIdleShake(): Promise<void> {
-		let result: ShakeResult | undefined;
-		try {
-			result = await this.ctx.viewSession.runIdleShake();
-		} catch (error) {
-			logger.debug("Idle shake failed", { error: String(error) });
-			return;
-		}
-		if (!result) return;
-		if (result.toolResultsDropped + result.blocksDropped === 0) return;
-		this.ctx.rebuildChatFromMessages();
-		this.ctx.statusLine.invalidate();
-		this.ctx.ui.requestRender();
-		this.ctx.showStatus(formatShakeSummary(result));
 	}
 
 	#scheduleIdleRecap(): void {

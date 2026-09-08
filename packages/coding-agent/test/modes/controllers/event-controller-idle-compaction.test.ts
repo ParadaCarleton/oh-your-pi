@@ -42,7 +42,7 @@ function createContext(
 		isStreaming?: boolean;
 		contextTokens?: number;
 		runIdleCompaction?: AgentSession["runIdleCompaction"];
-		runIdleShake?: AgentSession["runIdleShake"];
+		promptCacheColdAtMs?: AgentSession["promptCacheColdAtMs"];
 		runEphemeralTurn?: AgentSession["runEphemeralTurn"];
 		sessionName?: string;
 		showStatus?: InteractiveModeContext["showStatus"];
@@ -50,7 +50,7 @@ function createContext(
 	} = {},
 ) {
 	const runIdleCompaction = options.runIdleCompaction ?? (async () => {});
-	const runIdleShake = options.runIdleShake ?? (async () => undefined);
+	const promptCacheColdAtMs = options.promptCacheColdAtMs ?? (() => undefined);
 	const runEphemeralTurn =
 		options.runEphemeralTurn ?? (async () => ({ replyText: "", assistantMessage: createAssistantMessage() }));
 	const goalState: GoalModeState | undefined = options.goalObjective
@@ -73,7 +73,7 @@ function createContext(
 		sessionManager: { getSessionName: () => options.sessionName },
 		todoPhases: options.todoPhases ?? [],
 		...(options.showStatus ? { showStatus: options.showStatus } : {}),
-			session: {
+		session: {
 			agent: {
 				providerSessionState: undefined,
 				state: { messages: [createAssistantMessage()] },
@@ -81,7 +81,7 @@ function createContext(
 			isCompacting: options.isCompacting ?? false,
 			isStreaming: options.isStreaming ?? false,
 			runIdleCompaction,
-			runIdleShake,
+			promptCacheColdAtMs,
 			runEphemeralTurn,
 			model: { provider: "anthropic", id: "claude-sonnet-4-5" },
 			messages: [createAssistantMessage()],
@@ -142,36 +142,44 @@ describe("EventController idle compaction teardown", () => {
 		controller.dispose();
 	});
 
-	it("shakes instead of compacting when the context is under the threshold", async () => {
+	it("waits for the session's durable ChatGPT cache window instead of the five-minute fallback", async () => {
 		const runIdleCompaction = vi.fn();
-		const runIdleShake = vi.fn(async () => ({
-			mode: "elide" as const,
-			toolResultsDropped: 2,
-			blocksDropped: 1,
-			tokensFreed: 900,
-		}));
-		const context = createContext({ contextTokens: 50, runIdleCompaction, runIdleShake });
+		const context = createContext({
+			runIdleCompaction,
+			promptCacheColdAtMs: () => Date.now() + 60 * 60_000,
+		});
+
+		const controller = new EventController(context);
+		await controller.handleEvent({ type: "agent_end", messages: [createAssistantMessage()] });
+		vi.advanceTimersByTime(5 * 60_000);
+		expect(runIdleCompaction).not.toHaveBeenCalled();
+
+		vi.advanceTimersByTime(54 * 60_000 + 30_000);
+		expect(runIdleCompaction).toHaveBeenCalledTimes(1);
+		controller.dispose();
+	});
+
+	it("does not schedule idle maintenance when the context is under the compaction threshold", async () => {
+		const runIdleCompaction = vi.fn();
+		const context = createContext({ contextTokens: 50, runIdleCompaction });
 
 		const controller = new EventController(context);
 		await controller.handleEvent({ type: "agent_end", messages: [createAssistantMessage()] });
 		vi.advanceTimersByTime(301_000);
 
-		expect(runIdleShake).toHaveBeenCalled();
 		expect(runIdleCompaction).not.toHaveBeenCalled();
 		controller.dispose();
 	});
 
-	it("compacts rather than shaking once the context clears the threshold", async () => {
+	it("compacts once the context clears the threshold", async () => {
 		const runIdleCompaction = vi.fn();
-		const runIdleShake = vi.fn(async () => undefined);
-		const context = createContext({ contextTokens: 210, runIdleCompaction, runIdleShake });
+		const context = createContext({ contextTokens: 210, runIdleCompaction });
 
 		const controller = new EventController(context);
 		await controller.handleEvent({ type: "agent_end", messages: [createAssistantMessage()] });
 		vi.advanceTimersByTime(301_000);
 
 		expect(runIdleCompaction).toHaveBeenCalled();
-		expect(runIdleShake).not.toHaveBeenCalled();
 		controller.dispose();
 	});
 

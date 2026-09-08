@@ -64,6 +64,7 @@ import type {
 	Api,
 	AssistantMessage,
 	AssistantMessageEvent,
+	CacheRetention,
 	Context,
 	FetchImpl,
 	Model,
@@ -1158,6 +1159,10 @@ const ANTHROPIC_CACHE_TTL_MS = 5 * 60_000;
 const ANTHROPIC_CACHE_REFRESH_LEAD_MS = 15_000;
 const ANTHROPIC_CACHE_REFRESH_LIMIT = 3;
 const ANTHROPIC_CACHE_REFRESH_STATE_KEY = "anthropic-cache-refresh";
+const THIRTY_MINUTE_CACHE_TTL_MS = 30 * 60_000;
+const ONE_HOUR_CACHE_TTL_MS = 60 * 60_000;
+const OPENAI_LONG_CACHE_TTL_MS = 24 * ONE_HOUR_CACHE_TTL_MS;
+const GENERIC_CACHE_TTL_MS = 5 * 60_000;
 
 /** Anthropic bills a 1h cache write at 2x base input, against 1.25x for 5m. */
 const ANTHROPIC_LONG_CACHE_WRITE_INPUT_MULTIPLIER = 2;
@@ -1300,6 +1305,68 @@ export function getPromptCacheColdAtMs(
 	const state = providerSessionState?.get(ANTHROPIC_CACHE_REFRESH_STATE_KEY);
 	if (!(state instanceof AnthropicCacheRefreshState)) return undefined;
 	return state.coldAtMs;
+}
+
+export interface PromptCacheExpiryOptions<TApi extends Api = Api> {
+	model: Model<TApi>;
+	/** Last successful provider request/cache touch persisted by the caller. */
+	cacheTouchedAtMs: number;
+	cacheRetention?: CacheRetention;
+	providerSessionState?: Map<string, ProviderSessionState>;
+}
+
+function supportsLongCacheRetention(model: Model): boolean {
+	const compat = model.compat;
+	return (
+		compat !== undefined &&
+		(("supportsLongCacheRetention" in compat && compat.supportsLongCacheRetention === true) ||
+			("supportsLongPromptCacheRetention" in compat && compat.supportsLongPromptCacheRetention === true))
+	);
+}
+
+function getPromptCacheMinimumTtlMs(model: Model): number | undefined {
+	const compat = model.compat;
+	if (compat === undefined || !("promptCacheBreakpointTtl" in compat)) return undefined;
+	return compat.promptCacheBreakpointTtl === "30m" ? THIRTY_MINUTE_CACHE_TTL_MS : undefined;
+}
+
+/**
+ * Epoch at which callers should treat a model's reusable prompt cache as
+ * expired. Provider-owned live state wins, followed by advertised minimum
+ * lifetimes and explicit retention policies, with a 5m generic fallback.
+ */
+export function getPromptCacheExpiryMs<TApi extends Api>(options: PromptCacheExpiryOptions<TApi>): number {
+	const { model, cacheTouchedAtMs } = options;
+	const retention = resolveCacheRetention(options.cacheRetention);
+	if (retention === "none") return cacheTouchedAtMs;
+
+	if (model.api === "openai-codex-responses") return cacheTouchedAtMs + ONE_HOUR_CACHE_TTL_MS;
+
+	if (model.api === "anthropic-messages" || model.api === "bedrock-converse-stream") {
+		if (model.api === "anthropic-messages" && model.provider === "anthropic") {
+			const liveColdAtMs = getPromptCacheColdAtMs(options.providerSessionState);
+			if (liveColdAtMs !== undefined) return liveColdAtMs;
+		}
+		if (retention === "long" && supportsLongCacheRetention(model)) {
+			return cacheTouchedAtMs + ONE_HOUR_CACHE_TTL_MS;
+		}
+		return cacheTouchedAtMs + ANTHROPIC_CACHE_TTL_MS;
+	}
+
+	if (
+		model.api === "openai-responses" ||
+		model.api === "azure-openai-responses" ||
+		model.api === "openai-completions"
+	) {
+		const minimumTtlMs = getPromptCacheMinimumTtlMs(model);
+		if (minimumTtlMs !== undefined) return cacheTouchedAtMs + minimumTtlMs;
+		if (retention === "long" && supportsLongCacheRetention(model)) {
+			return cacheTouchedAtMs + OPENAI_LONG_CACHE_TTL_MS;
+		}
+		return cacheTouchedAtMs + GENERIC_CACHE_TTL_MS;
+	}
+
+	return cacheTouchedAtMs + GENERIC_CACHE_TTL_MS;
 }
 
 function supportsAnthropicCacheRefresh<TApi extends Api>(model: Model<TApi>): boolean {

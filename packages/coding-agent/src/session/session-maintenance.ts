@@ -49,7 +49,14 @@ import {
 	readToolSupersedeKey,
 } from "@oh-my-pi/pi-agent-core/compaction/pruning";
 import type { ProtectedToolMatcher } from "@oh-my-pi/pi-agent-core/compaction/tool-protection";
-import type { AssistantMessage, CodexCompactionContext, Message, Model, ProviderSessionState } from "@oh-my-pi/pi-ai";
+import {
+	type AssistantMessage,
+	type CodexCompactionContext,
+	getPromptCacheColdAtMs,
+	type Message,
+	type Model,
+	type ProviderSessionState,
+} from "@oh-my-pi/pi-ai";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { preferredDialect } from "@oh-my-pi/pi-catalog/identity";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
@@ -198,6 +205,9 @@ const PRUNE_CACHE_WARM_SUFFIX_TOKENS = 8_000;
  * still-warm prefix is busted by the flush. 90 min leaves margin over the 1h TTL.
  */
 const PRUNE_IDLE_FLUSH_MS = 90 * 60_000;
+
+/** ChatGPT's session prompt cache remains reusable for one hour after the last model turn. */
+const CHATGPT_PROMPT_CACHE_TTL_MS = 60 * 60_000;
 
 /**
  * Hysteresis band for the post-maintenance "did we actually create headroom?"
@@ -377,6 +387,7 @@ export class SessionMaintenance {
 	/** In-flight or armed background speculative compaction, if any. */
 	#speculation: SpeculationRun | undefined;
 	#skipPostTurnMaintenanceAssistantTimestamp: number | undefined;
+	#lastCacheExpiryShakeKey: string | undefined;
 	/**
 	 * Consecutive no-progress `response.incomplete` (length-stop) recoveries in
 	 * the current continuation loop. Bounded by {@link INCOMPLETE_RECOVERY_MAX_RETRIES};
@@ -1201,6 +1212,44 @@ export class SessionMaintenance {
 	async runIdleCompaction(): Promise<void> {
 		if (this.#host.isStreaming() || this.isCompacting) return;
 		await this.runAutoCompaction("idle", false, true);
+	}
+
+	/**
+	 * Epoch at which the active model's reusable prompt cache goes cold. Live
+	 * provider state wins while this process remains open; otherwise the last
+	 * durable assistant timestamp makes the decision survive session resume.
+	 */
+	promptCacheColdAtMs(): number | undefined {
+		const lastAssistant = this.#host.findLastAssistantMessage();
+		const model = this.#model;
+		if (!lastAssistant || !model || !Number.isFinite(lastAssistant.timestamp)) return undefined;
+		if (
+			lastAssistant.api !== model.api ||
+			lastAssistant.provider !== model.provider ||
+			lastAssistant.model !== model.id
+		) {
+			return lastAssistant.timestamp;
+		}
+
+		if (model.api === "openai-codex-responses") {
+			return lastAssistant.timestamp + CHATGPT_PROMPT_CACHE_TTL_MS;
+		}
+		if (model.api !== "anthropic-messages" || model.provider !== "anthropic") return undefined;
+		return getPromptCacheColdAtMs(this.#host.providerSessionState);
+	}
+
+	/** Shake a cold reusable prefix immediately before its next user-authored turn. */
+	async runCacheExpiredPrePromptShakeIfNeeded(): Promise<void> {
+		if (!this.#host.settings.get("compaction.idleEnabled")) return;
+		const lastAssistant = this.#host.findLastAssistantMessage();
+		const model = this.#model;
+		if (!lastAssistant || !model) return;
+		const shakeKey = `${lastAssistant.timestamp}:${model.api}:${model.provider}:${model.id}`;
+		if (this.#lastCacheExpiryShakeKey === shakeKey) return;
+		const coldAtMs = this.promptCacheColdAtMs();
+		if (coldAtMs === undefined || Date.now() < coldAtMs) return;
+		this.#lastCacheExpiryShakeKey = shakeKey;
+		await this.#runAutoShake("idle", false, this.#host.promptGeneration(), false, false, undefined, true);
 	}
 
 	/**

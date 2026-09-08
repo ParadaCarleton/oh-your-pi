@@ -1548,8 +1548,6 @@
 - Preserve effective context and output limits when model overrides change unrelated settings, such as thinking effort levels.
 ### Fixed
 
-- ChatGPT auto-shake now waits until the prompt cache has expired and runs before the next user message, including after reopening a session.
-- Pre-execution extensions that rewrite a streamed edit now execute the rewritten edit instead of the original input.
-- Claude Code sessions without history metadata use the working directory recorded by their transcript before falling back to the encoded project folder name.
+- Auto-shake now runs before the first user message after the active model's prompt cache expires, including after reopening a session.
 
 Older entries are archived in [packages/coding-agent/CHANGELOG.md@47b1156699bb](https://github.com/can1357/oh-my-pi/blob/47b1156699bb852a157216acec52ff743d992dca/packages/coding-agent/CHANGELOG.md).

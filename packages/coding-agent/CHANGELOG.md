@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Long-running Python and JavaScript eval cells now automatically background by default and deliver their results when finished.
+
 ## [18.1.14] - 2026-09-07
 
 ### Fixed

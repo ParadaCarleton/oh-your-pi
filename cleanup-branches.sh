@@ -6,9 +6,9 @@
 #  PLAIN ENGLISH
 #  -------------
 #  Your `git push --all` published every branch that existed on your laptop.
-#  This script removes the 32 that are dead: already merged into main, exact
+#  This script removes the 39 that are dead: already merged into main, exact
 #  duplicates of another branch, superseded by a newer branch, abandoned
-#  experiments, and old backup snapshots.
+#  experiments, old backup snapshots, and stale pre-rebase copies.
 #
 #  Before removing ANY branch, it saves that branch as a permanent git tag
 #  (think: a bookmark that never expires) and pushes the tag to GitHub. If a
@@ -17,10 +17,11 @@
 #
 #  USAGE
 #  -----
-#    ./cleanup-branches.sh                           # dry run — changes nothing
-#    ./cleanup-branches.sh --execute                 # do it — asks to confirm
-#    ./cleanup-branches.sh --execute --yes           # do it — no prompt
-#    ./cleanup-branches.sh --execute --keep-backups  # delete 24, keep the 8 backup/*
+#    ./cleanup-branches.sh                            # dry run — changes nothing
+#    ./cleanup-branches.sh --execute                  # do it — asks to confirm
+#    ./cleanup-branches.sh --execute --yes            # do it — no prompt
+#    ./cleanup-branches.sh --execute --keep-backups   # spare the 8 backup/*
+#    ./cleanup-branches.sh --execute --keep-snapshots # spare the 3 stale snapshots
 #
 #  AFTERWARDS, to bring any branch back:
 #    ./restore-branch.sh                             # list what was archived
@@ -39,6 +40,7 @@ MANIFEST="branch-archive-manifest.txt"
 MODE="dry-run"
 ASSUME_YES="no"
 KEEP_BACKUPS="no"
+KEEP_SNAPSHOTS="no"
 
 usage() {
   sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'
@@ -47,10 +49,11 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --execute)      MODE="execute" ;;
-    --yes|-y)       ASSUME_YES="yes" ;;
-    --keep-backups) KEEP_BACKUPS="yes" ;;
-    -h|--help)      usage ;;
+    --execute)        MODE="execute" ;;
+    --yes|-y)         ASSUME_YES="yes" ;;
+    --keep-backups)   KEEP_BACKUPS="yes" ;;
+    --keep-snapshots) KEEP_SNAPSHOTS="yes" ;;
+    -h|--help)        usage ;;
     *) echo "Unknown option: $1 (try --help)"; exit 1 ;;
   esac
   shift
@@ -106,9 +109,42 @@ BACKUP_BRANCHES=(
   backup/github-merge-tip
 )
 
-TO_DELETE=("${CORE_SAFE[@]}")
+# -----------------------------------------------------------------------------
+# Found by reading the actual code, not by ancestry.
+# These four are PROVABLY redundant: their work is byte-identical to, or fully
+# absorbed into, a branch that is being kept. Zero work lost.
+# -----------------------------------------------------------------------------
+NEW_REDUNDANT=(
+  # changed files are byte-identical to fix/cache-expired-preprompt-shake
+  stats-recorded-folder
+  plugins-relink-over-directory
+  fix/streamed-edit-hook-revisions
+  # every line of collapse code is present in pr/tree-collapse, which also has
+  # one extra commit and merges cleanly against upstream
+  review/pr7762-comments
+)
+
+# -----------------------------------------------------------------------------
+# Stale snapshots: pre-rebase copies, or the original minimal version of a
+# feature that has since been rebuilt. They hold intermediate commit history
+# that exists nowhere else, so --keep-snapshots spares them.
+# -----------------------------------------------------------------------------
+STALE_SNAPSHOTS=(
+  # pre-rebase snapshots; the rebase completed and its result is in
+  # fix/cache-expired-preprompt-shake. 100 and 77 merge conflicts vs upstream.
+  omp-fork-prerebase
+  omp-fork-prerebase2
+  # original /prune; pr/prune-archive has the evolved version
+  # handlePruneCommand(mode: PruneMode)
+  pr/prune
+)
+
+TO_DELETE=("${CORE_SAFE[@]}" "${NEW_REDUNDANT[@]}")
 if [ "$KEEP_BACKUPS" = "no" ]; then
   TO_DELETE+=("${BACKUP_BRANCHES[@]}")
+fi
+if [ "$KEEP_SNAPSHOTS" = "no" ]; then
+  TO_DELETE+=("${STALE_SNAPSHOTS[@]}")
 fi
 
 tagname() { printf '%s/%s-%s' "$TAG_PREFIX" "$(printf '%s' "$1" | tr '/' '-')" "$STAMP"; }
@@ -125,8 +161,9 @@ git remote get-url "$REMOTE" >/dev/null 2>&1 || { echo "    No remote named '$RE
 CURRENT="$(git symbolic-ref --short HEAD 2>/dev/null || echo '')"
 echo "    remote      : $(git remote get-url "$REMOTE")"
 echo "    on branch   : ${CURRENT:-<detached HEAD>}"
-echo "    mode        : $MODE"
-echo "    keep backups: $KEEP_BACKUPS"
+echo "    mode          : $MODE"
+echo "    keep backups  : $KEEP_BACKUPS"
+echo "    keep snapshots: $KEEP_SNAPSHOTS"
 
 # -----------------------------------------------------------------------------
 echo
@@ -153,7 +190,15 @@ for b in "${TO_DELETE[@]}"; do
   done
   [ "$skip" = "yes" ] && continue
   if ! git rev-parse --verify --quiet "refs/remotes/$REMOTE/$b" >/dev/null; then
-    echo "    WARNING: $REMOTE/$b does not exist — skipping"
+    # already cleaned up by an earlier run? check for its archive tag
+    t="$(tagname "$b")"
+    if git ls-remote "$REMOTE" "refs/tags/$t" 2>/dev/null | grep -q .; then
+      echo "    already cleaned up in an earlier run: $b (tag $t present)"
+    elif git ls-remote "$REMOTE" "refs/tags/${t%-*}-*" 2>/dev/null | grep -q 'archive/'; then
+      echo "    already cleaned up in an earlier run: $b (archive tag present)"
+    else
+      echo "    WARNING: $REMOTE/$b does not exist and has no archive tag — skipping"
+    fi
     continue
   fi
   FILTERED+=("$b")

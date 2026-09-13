@@ -1,9 +1,88 @@
 # Branch cleanup plan — `ParadaCarleton/oh-your-pi`
 
-Snapshot taken 2026-09-12. Fork of upstream `can1357/oh-my-pi`. Default branch: `main`.
+Fork of upstream `can1357/oh-my-pi`. Default branch: `main`. No open pull requests.
 
-**62 branches exist on GitHub.** `main` has 22,140 commits. There are **no open pull requests**
-(4 PRs total, all from August 2026: #1 and #2 merged, #3 and #4 closed).
+---
+
+## ✅ STATUS: round 1 DONE — 62 branches → 31
+
+Round 1 ran successfully. All 32 branches from Categories A–E were deleted and **all 32 archive
+tags are on GitHub** (`archive/*-20260912`), so every one is recoverable.
+
+```
+branches on GitHub : 31   (main + 30)
+archive tags       : 32   (verified present)
+branches lost      : 0
+```
+
+Re-running `./cleanup-branches.sh` now correctly reports those 32 as
+*"already cleaned up in an earlier run (archive tag present)"* and moves on.
+
+Round 2 (below) identifies **7 more** stale branches found by reading the actual code.
+
+---
+
+## Snapshot of the original mess
+
+Originally **62 branches** on GitHub; `main` had 22,140 commits.
+
+---
+
+## ROUND 2 — 7 more stale branches, found by reading the code
+
+The 30 survivors all held commits existing nowhere else, so ancestry checks could not call any of
+them dead. The real question is whether that unique work is still *worth keeping*. Three tests
+answered it:
+
+1. **Does it still merge into current upstream?** A real 3-way merge (`git merge-tree`) of each
+   branch against today's `upstream/main`.
+2. **Is its code byte-identical to the fork's aggregate branch**
+   (`fix/cache-expired-preprompt-shake`)? Identical means the work already landed there.
+3. **Is it just an older draft of another branch?** Comparing the actual lines each one adds.
+
+### The 7 to delete
+
+| Branch | Evidence |
+|---|---|
+| `stats-recorded-folder` | All 4 changed files byte-identical to the aggregate |
+| `plugins-relink-over-directory` | All 3 changed files byte-identical to the aggregate |
+| `fix/streamed-edit-hook-revisions` | Source + test byte-identical; only a CHANGELOG differs |
+| `review/pr7762-comments` | It is `pr/tree-collapse` minus its final commit. Every line of collapse code is in `pr/tree-collapse`, which merges cleanly where this one conflicts |
+| `pr/prune` | Original minimal `/prune`. `pr/prune-archive` has the evolved version, `handlePruneCommand(mode: PruneMode)` |
+| `omp-fork-prerebase` | Pre-rebase snapshot: 13 of its 25 unique commits exist post-rebase in the aggregate; **100** merge conflicts |
+| `omp-fork-prerebase2` | Same story; **77** merge conflicts |
+
+`--keep-snapshots` spares the last three if you would rather keep them.
+
+### Keep — merge cleanly into current upstream
+
+`docs/allow-local-commits` · `feat/ttsr-structured-ast-conditions` · `fix/cache-expired-user-turn-shake` ·
+`fix/claude-import-tree` · `fix/hub-wait-delivery` · `fix/jj-status-snapshot` ·
+`fix/power-assertion-followups` · `fix/python-eval-auto-background-default` ·
+`fix/tree-selector-filtered-shape` · `import-api-error-failed-turn` · `import-decode-project-cwd` ·
+`pr/export-collapse` · `pr/prune-empty-sessions` · `pr/tree-collapse` · `tui-tree-scroll-one-offset`
+
+### Keep, but they conflict — real work that needs a rebase when you pick it up
+
+Small, localised conflicts (1–20 files). That is normal for long-lived work, not staleness:
+
+`pr-10320` (9, `streaming-reveal.ts`) · `pr/prune-archive` (17) · `review/pr8301-navigation` (20) ·
+`review/pr8588-active-status` (6, `command-help.ts`) · `review/pr8593-comments` (7, `command-help.ts`) ·
+`fix/filtered-tree-connectors` (17 — its other three features all have newer dedicated branches, but
+it holds one unique connector fix)
+
+### ⚠️ Separate finding: a leaked local path
+
+Four branches commit a file `bazel-oh-my-pi` whose entire contents are one developer's absolute
+local path:
+
+```
+/home/lime/.cache/bazel/_bazel_lime/1bf02ea2bd21106999c8a6708f331f06/execroot/_main
+```
+
+Present in `fix/cache-expired-preprompt-shake` (**being kept**), `omp-fork-prerebase`,
+`omp-fork-prerebase2`, and `pr/prune`. This is an accidentally-committed Bazel symlink, not source
+code. Unrelated to the branch cleanup, but worth deleting from the tree and adding to `.gitignore`.
 
 ---
 

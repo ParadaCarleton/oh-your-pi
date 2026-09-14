@@ -92,11 +92,16 @@ jj git push --bookmark <BRANCH>
 
 Undo at any point: `jj undo` reverts the last jj operation.
 
-Verify afterwards:
+Verify afterwards (for the branch you just rewrote):
 
 ```bash
-git log --all --oneline -- bazel-oh-my-pi    # should return nothing
+git log <BRANCH> --oneline -- bazel-oh-my-pi    # should print nothing
 ```
+
+If `git log --all --oneline -- bazel-oh-my-pi` still prints the old add commit, check whether
+that result comes from an `archive/*` tag. That is expected: the archive tag is an intentional
+snapshot of the pre-purge history. Removing the file from those snapshots too would require
+deleting the safety tags, which I do not recommend.
 
 ---
 

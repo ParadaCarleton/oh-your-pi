@@ -113,7 +113,13 @@ GH_EMAIL="$(gh api user --jq '"\(.id)+\(.login)@users.noreply.github.com"')"
 jj config set --repo user.email "$GH_EMAIL"
 
 # Metadata changes create another commit ID; that is expected.
-jj metaedit --update-author <NEW_COMMIT>
+# This preserves the original author's name/email and updates the committer
+# to the configured no-reply identity.
+jj metaedit --update-author-timestamp <NEW_COMMIT>
+
+# If the Author line was private too, use this instead (it changes the author
+# to your configured no-reply identity):
+# jj metaedit --update-author <NEW_COMMIT>
 
 # The local bookmark follows the rewritten commit.
 jj git push --bookmark <BRANCH>

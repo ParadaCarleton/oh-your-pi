@@ -57,8 +57,9 @@ behaves as you expect before touching `fix/cache-expired-preprompt-shake`.
 
 ```bash
 # 0. Give jj a LOCAL branch to move (it cannot push a bare remote-tracking ref).
-#    Colocated mode picks this up automatically on the next jj command.
-git branch <BRANCH> origin/<BRANCH>
+#    If the local bookmark already exists, skip this command. Colocated mode often
+#    imports it automatically from Git.
+git branch <BRANCH> origin/<BRANCH>  # skip if it says the branch already exists
 
 # 1. Create a new change sitting directly on top of the commit that added the file
 jj new <COMMIT_SHA>
@@ -67,17 +68,26 @@ jj new <COMMIT_SHA>
 rm bazel-oh-my-pi
 
 # 3. Fold that deletion back into the commit below it — this is the amend.
+#    The commit is probably IMMUTABLE: it is reachable from a remote bookmark
+#    and, in this repository, also from an archive tag. That protection is good
+#    for normal work, but this operation intentionally rewrites history.
 #    jj automatically restacks every descendant commit.
-jj squash
+jj squash --ignore-immutable
 
 # 4. LOOK at what you got before pushing anything
 jj log -r '::<BRANCH>' --stat | head -40
 git show <BRANCH>:bazel-oh-my-pi 2>&1 | head -1   # should say "does not exist"
 
-# 5. Push. jj knows it just rewrote these commits, so it may not need --force.
-jj git push --branch <BRANCH>
-#   if jj refuses with a non-fast-forward error, add --force:
-jj git push --branch <BRANCH> --force
+# 5. Make jj track the existing remote branch before pushing it. If jj says it
+#    is already tracked, that is fine. The @origin form is accepted by jj.
+jj bookmark track <BRANCH>@origin
+
+# 6. Push. Once the remote bookmark is tracked, jj performs the safe
+#    force-update needed for this rewrite (it checks that the remote did not
+#    change unexpectedly while you were working).
+jj git push --bookmark <BRANCH>
+#    Older jj versions call --bookmark --branch:
+# jj git push --branch <BRANCH>
 ```
 
 Undo at any point: `jj undo` reverts the last jj operation.

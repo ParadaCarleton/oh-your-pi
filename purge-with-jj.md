@@ -15,15 +15,21 @@ Exactly **one commit** added the file. On every branch it is the same logical co
 `feat(session): add /prune to drop empty conversation branches` (2026-08-05). It has a different
 SHA per branch only because of rebases:
 
-| Branch | Commit that added it |
-|---|---|
-| `fix/cache-expired-preprompt-shake` | `d7f2a6502a` |
-| `omp-fork-prerebase` | `4e52956ba2` |
-| `omp-fork-prerebase2` | `32cda238b9` |
-| `pr/prune` | `c3002bf218` |
+| Branch | Commit that added it | Descendants rewritten |
+|---|---|---|
+| `pr/prune` | `c3002bf218` | **0** — it is the tip, so only 1 commit changes |
+| `fix/cache-expired-preprompt-shake` | `d7f2a6502a` | 57 |
+| `omp-fork-prerebase2` | `32cda238b9` | 56 |
+| `omp-fork-prerebase` | `4e52956ba2` | 60 |
 
 No other commit on any branch touches the file. So this is a single amend plus a restack — the
 case jj handles best.
+
+Note the add commit also contains the real `/prune` work (`session-manager.ts` +116, tests +315,
+etc). Amending removes only the symlink from it; everything else in that commit is preserved.
+
+**Start with `pr/prune`** — zero descendants, so it rewrites a single commit. It is the perfect
+place to confirm the workflow does what you expect before touching the 57-descendant branch.
 
 ---
 
@@ -50,6 +56,10 @@ Repeat for each branch. Start with `pr/prune` (the least important) to confirm t
 behaves as you expect before touching `fix/cache-expired-preprompt-shake`.
 
 ```bash
+# 0. Give jj a LOCAL branch to move (it cannot push a bare remote-tracking ref).
+#    Colocated mode picks this up automatically on the next jj command.
+git branch <BRANCH> origin/<BRANCH>
+
 # 1. Create a new change sitting directly on top of the commit that added the file
 jj new <COMMIT_SHA>
 
@@ -61,12 +71,16 @@ rm bazel-oh-my-pi
 jj squash
 
 # 4. LOOK at what you got before pushing anything
-jj log -r '::<branch>' --stat | head -40
-git show HEAD:bazel-oh-my-pi 2>&1 | head -1   # should say "does not exist"
+jj log -r '::<BRANCH>' --stat | head -40
+git show <BRANCH>:bazel-oh-my-pi 2>&1 | head -1   # should say "does not exist"
 
-# 5. Push (force is required — history changed)
+# 5. Push. jj knows it just rewrote these commits, so it may not need --force.
+jj git push --branch <BRANCH>
+#   if jj refuses with a non-fast-forward error, add --force:
 jj git push --branch <BRANCH> --force
 ```
+
+Undo at any point: `jj undo` reverts the last jj operation.
 
 Verify afterwards:
 

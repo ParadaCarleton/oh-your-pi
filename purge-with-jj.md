@@ -98,6 +98,30 @@ jj git push --bookmark <BRANCH>
 # jj git push --branch <BRANCH>
 ```
 
+### If GitHub reports `GH007: Your push would publish a private email address`
+
+That means the rewritten commit was made with a private email from your local jj/git
+configuration. Configure jj with the GitHub-generated no-reply address, then rewrite the
+new commit's metadata before pushing again:
+
+```bash
+# Inspect the identity without pasting it into chat
+git show -s --format='Author: %an <%ae>%nCommitter: %cn <%ce>' <NEW_COMMIT>
+
+# This prints your GitHub no-reply address; review it before using it.
+GH_EMAIL="$(gh api user --jq '"\(.id)+\(.login)@users.noreply.github.com"')"
+jj config set --repo user.email "$GH_EMAIL"
+
+# Metadata changes create another commit ID; that is expected.
+jj metaedit --update-author <NEW_COMMIT>
+
+# The local bookmark follows the rewritten commit.
+jj git push --bookmark <BRANCH>
+```
+
+Do not disable GitHub's email-privacy protection unless you deliberately want your private
+email recorded in the public repository. The no-reply address is the safer choice.
+
 Undo at any point: `jj undo` reverts the last jj operation.
 
 Verify afterwards (for the branch you just rewrote):

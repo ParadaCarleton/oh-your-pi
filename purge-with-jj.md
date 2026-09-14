@@ -82,9 +82,17 @@ git show <BRANCH>:bazel-oh-my-pi 2>&1 | head -1   # should say "does not exist"
 #    is already tracked, that is fine. The @origin form is accepted by jj.
 jj bookmark track <BRANCH>@origin
 
-# 6. Push. Once the remote bookmark is tracked, jj performs the safe
-#    force-update needed for this rewrite (it checks that the remote did not
-#    change unexpectedly while you were working).
+#    Because the remote still points at the OLD commit, tracking may report:
+#      <BRANCH> (conflicted): ... <NEW_COMMIT> ... <OLD_COMMIT> ...
+#    This is expected. First verify that <NEW_COMMIT> is the amended commit
+#    (the one without bazel-oh-my-pi), then choose it explicitly:
+jj bookmark set <BRANCH> --revision <NEW_COMMIT>
+#    If your jj asks for a bookmark move instead:
+# jj bookmark move --to <NEW_COMMIT> --allow-backwards <BRANCH>
+
+# 6. Push. Once the bookmark is resolved, jj performs the safe force-update
+#    needed for this rewrite (it checks that the remote did not change
+#    unexpectedly while you were working).
 jj git push --bookmark <BRANCH>
 #    Older jj versions call --bookmark --branch:
 # jj git push --branch <BRANCH>

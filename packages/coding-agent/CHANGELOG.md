@@ -260,6 +260,9 @@
 ### Fixed
 
 - Pre-execution extensions that rewrite a streamed edit now execute the rewritten edit instead of the original input.
+### Changed
+
+- Long-running Python and JavaScript eval cells now automatically background by default and deliver their results when finished.
 
 ## [18.1.14] - 2026-09-07
 

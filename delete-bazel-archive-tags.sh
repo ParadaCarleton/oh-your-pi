@@ -114,8 +114,11 @@ read -r confirmation
 for tag in "${BAD_TAGS[@]}"; do
   echo "Deleting $REMOTE/$tag"
   git push "$REMOTE" --delete "$tag"
+  # Remove the local copy too, so a later `git push --tags` cannot accidentally
+  # publish the leaked snapshot again.
+  git tag --delete "$tag" >/dev/null 2>&1 || true
 done
 
 echo
-echo "Deleted ${#BAD_TAGS[@]} remote archive tag(s)."
+echo "Deleted ${#BAD_TAGS[@]} remote and local archive tag(s)."
 echo "Already-cloned copies and unreachable Git objects may still exist elsewhere."

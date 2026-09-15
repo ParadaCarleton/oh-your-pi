@@ -257,6 +257,9 @@
 - Session rewrites preserve open-reader snapshots and replacement identity when a rename needs an EPERM fallback.
 - Fixed WorkPool children retaining a stale Gemini-formatted `yield` declaration when pooled items were installed or cleared.
 - Preserve effective context and output limits when model overrides change unrelated settings, such as thinking effort levels.
+### Fixed
+
+- Pre-execution extensions that rewrite a streamed edit now execute the rewritten edit instead of the original input.
 
 ## [18.1.14] - 2026-09-07
 

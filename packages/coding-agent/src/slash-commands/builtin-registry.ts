@@ -1812,6 +1812,20 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		},
 	},
 	{
+		name: "prune",
+		description: "Prune all empty branches (no assistant reply, or only a failed one)",
+		acpDescription: "Prune empty conversation branches",
+		handle: async (_command, runtime) => {
+			const count = await runtime.session.pruneEmptyBranches();
+			await runtime.output(`Pruned ${count} empty branch ${count === 1 ? "entry" : "entries"}.`);
+			return commandConsumed();
+		},
+		handleTui: async (_command, runtime) => {
+			runtime.ctx.editor.setText("");
+			await runtime.ctx.handlePruneCommand();
+		},
+	},
+	{
 		name: "handoff",
 		description: "Hand off session context to a new session",
 		inlineHint: "[focus instructions]",

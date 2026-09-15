@@ -4685,6 +4685,10 @@ export class InteractiveMode implements InteractiveModeContext {
 		return this.#commandController.handleShakeCommand(mode);
 	}
 
+	handlePruneCommand(): Promise<void> {
+		return this.#commandController.handlePruneCommand();
+	}
+
 	executeCompaction(
 		customInstructionsOrOptions?: string | CompactOptions,
 		isAuto?: boolean,

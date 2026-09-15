@@ -96,7 +96,8 @@ function visibleTranscriptEntries(entries: readonly SessionEntry[]): readonly Se
 	const pending = [...archivedRoots];
 	while (pending.length > 0) {
 		const id = pending.pop() as string;
-		if (!hidden.add(id)) continue;
+		if (hidden.has(id)) continue;
+		hidden.add(id);
 		const descendants = children.get(id);
 		if (descendants) pending.push(...descendants);
 	}

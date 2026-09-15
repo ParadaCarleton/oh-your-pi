@@ -269,6 +269,16 @@
 ### Fixed
 
 - Auto-shake now runs before the first user message after the active model's prompt cache expires, including after reopening a session.
+- Upgraded collaboration sessions to protocol version 4 so guests receive archived branch state.
+
+### Added
+
+- Added `/prune` to archive conversation branches with no completed assistant reply, with `/prune delete` available for permanent removal.
+- Added `/unarchive` and tree controls for revealing, archiving, and restoring branches; exports and shares omit archived content by default.
+
+### Fixed
+
+- Archived branches retain the ancestry and active bookkeeping needed for cycle-safe pruning, nested restoration from every navigation API, branched-session copying, authoritative live collaboration resynchronization, and efficient leak-free exports.
 
 ## [18.1.14] - 2026-09-07
 

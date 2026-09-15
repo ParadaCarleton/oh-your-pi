@@ -7,6 +7,20 @@ tip, and it is already in `.gitignore`. You probably do not need this.
 **Not verified by me** — jj could not be installed in my sandbox, so I could not run this.
 It is written as a reviewable sequence, not a script, so you can inspect each step.
 
+For an automated version that still uses jj, run `./purge-bazel-with-jj.sh`. It works in a
+ temporary clone, creates `archive/bazel-prepurge-*` safety tags, rewrites each affected branch,
+and pushes through `jj git push`. It is dry-run by default:
+
+```bash
+./purge-bazel-with-jj.sh
+export JJ_EMAIL="$(gh api user --jq '"\(.id)+\(.login)@users.noreply.github.com"')"
+./purge-bazel-with-jj.sh --execute
+```
+
+The script has been shell-syntax-checked and its dry-run was tested against the current remote,
+but jj itself is not installed in the development sandbox, so the destructive jj path remains
+unverified here. The manual sequence below is useful if you want to inspect each branch yourself.
+
 ---
 
 ## What we know

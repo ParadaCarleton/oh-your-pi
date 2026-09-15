@@ -294,6 +294,7 @@
 ### Added
 
 - Added `/prewalk restart` to return an active session to its `@default` model and re-arm the one-shot handoff to `@smol`.
+- TTSR `astCondition` now accepts structured ast-grep rules, including negative, relational, composite, and metavariable constraint clauses.
 
 ### Changed
 
@@ -314,6 +315,7 @@
 - Fixed frame skips while streaming long markdown Write previews ([#10955](https://github.com/can1357/oh-my-pi/issues/10955)).
 - LiteLLM discovery no longer caches an empty catalog after a timed-out run: a rich-metadata timeout now falls back to `/v1/models`, and a discovery failure with no prior catalog leaves the cache untouched so the next launch retries immediately instead of hiding discovery-only models ([#10964](https://github.com/can1357/oh-my-pi/issues/10964)).
 - Searching `free` in the model picker now finds every zero-cost model, not just the ones with `free` in their id.
+- Preserved hyphenated utility identifiers in structured TTSR AST conditions.
 
 ## [18.1.11] - 2026-09-05
 
@@ -381,13 +383,6 @@
 ### Removed
 
 - Removed the librarian agent.
-### Added
-
-- TTSR `astCondition` now accepts structured ast-grep rules, including negative, relational, composite, and metavariable constraint clauses.
-
-### Fixed
-
-- Preserved hyphenated utility identifiers in structured TTSR AST conditions.
 
 ## [18.1.8] - 2026-09-03
 

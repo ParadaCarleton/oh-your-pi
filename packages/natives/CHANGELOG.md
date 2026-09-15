@@ -13,6 +13,9 @@
 ### Fixed
 
 - Fixed C++ language inference excluding CUDA header (`.cuh`) files ([#10782](https://github.com/can1357/oh-my-pi/pull/10782) by [@alphastorm](https://github.com/alphastorm)).
+### Added
+
+- `astMatch` now accepts serialized structured ast-grep rule cores through `ruleConfigs`.
 
 ## [18.1.9] - 2026-09-04
 
@@ -24,9 +27,6 @@
 ### Fixed
 
 - Fixed native version-control cleanup to respect ignore rules and path boundaries while safely handling symlinks, nested repositories, and submodules.
-### Added
-
-- `astMatch` now accepts serialized structured ast-grep rule cores through `ruleConfigs`.
 
 ## [18.1.7] - 2026-09-03
 

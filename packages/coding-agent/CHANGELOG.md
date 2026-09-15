@@ -301,6 +301,8 @@
 
 - Added `/prewalk restart` to return an active session to its `@default` model and re-arm the one-shot handoff to `@smol`.
 - TTSR `astCondition` now accepts structured ast-grep rules, including negative, relational, composite, and metavariable constraint clauses.
+- Added `/prune` to archive conversation branches with no completed assistant reply, with `/prune delete` available for permanent removal.
+- Added `/unarchive` and tree controls for revealing, archiving, and restoring branches; exports and shares omit archived content by default.
 
 ### Changed
 
@@ -322,6 +324,7 @@
 - LiteLLM discovery no longer caches an empty catalog after a timed-out run: a rich-metadata timeout now falls back to `/v1/models`, and a discovery failure with no prior catalog leaves the cache untouched so the next launch retries immediately instead of hiding discovery-only models ([#10964](https://github.com/can1357/oh-my-pi/issues/10964)).
 - Searching `free` in the model picker now finds every zero-cost model, not just the ones with `free` in their id.
 - Preserved hyphenated utility identifiers in structured TTSR AST conditions.
+- Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, and continued navigation.
 
 ## [18.1.11] - 2026-09-05
 
@@ -1537,16 +1540,6 @@
 - Fixed `/handoff` losing local artifacts (plans, scratch files, research notes) by copying them across the handoff session boundary.
 - Replaced libarchive-based tar parsing with a hardened, in-process tar reader to prevent crashes and safely handle complex archive structures, symlinks, and sparse metadata.
 - Fixed `Ctrl+O` tool-output expansion failing to reach launch-completion messages wrapped in the hidden tool activity container.
-### Added
-
-- Added a `/prune` slash command that deletes conversation branches with nothing to read in them: an entry survives only if an answered assistant reply sits at or below it, so unanswered prompts, replies that errored or were aborted, replies left waiting on a tool call that never came back, and the tool traffic under them all go. The active branch is always kept intact.
-- `/prune` now hides empty branches instead of deleting them. An archive record is appended to the session file, the branch stays on disk byte for byte, and the tree, HTML exports (including embedded subagent transcripts), and `/share` stop offering it. `/prune delete` is the old destructive behavior, now opt-in, and archiving a branch also shields it from it.
-- Added `/unarchive` to bring hidden branches back: `/unarchive` restores them all, `/unarchive <branch id>` restores one, and `/unarchive list` shows what is hidden.
-- Added archiving from the `/tree` selector: `Shift+A` hides the highlighted branch whether or not it is empty, `Alt+R` reveals archived branches in place, and selecting or pressing `Shift+A` on a revealed branch restores it.
-
-### Fixed
-
-- `/prune delete` now preserves the conversation ancestry needed by archived branches and removes labels together with deleted targets.
 
 ## [17.2.14] - 2026-08-11
 

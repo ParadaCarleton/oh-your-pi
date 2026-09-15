@@ -1591,7 +1591,7 @@ export class SelectorController {
 					try {
 						// Revealed archived rows are selectable, but the active branch must
 						// never remain hidden after navigation.
-						if (archivedRoot) await this.ctx.session.restoreArchived(archivedRoot);
+						if (archivedRoot) await this.ctx.session.restoreArchived(entryId);
 						let result = await this.ctx.session.navigateTree(entryId, {
 							summarize: wantsSummary,
 							customInstructions,
@@ -1687,7 +1687,7 @@ export class SelectorController {
 						const archivedRoot = this.ctx.sessionManager.getArchivedRootId(entryId);
 						try {
 							if (archivedRoot) {
-								await this.ctx.session.restoreArchived(archivedRoot);
+								await this.ctx.session.restoreArchived(entryId);
 							} else {
 								const hidden = await this.ctx.session.archiveBranch(entryId);
 								if (hidden === 0) return;

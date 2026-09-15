@@ -837,6 +837,24 @@ describe("pruneEmptyBranches", () => {
 		expect(session.getBranch(idArchived).map(entry => entry.id)).toEqual([idRoot, idAncestor, idArchived]);
 	});
 
+	it("keeps active archive bookkeeping when its restored target is pruned", async () => {
+		const session = SessionManager.inMemory();
+		const idRoot = session.appendMessage(userMsg("root"));
+		const idAsst = session.appendMessage(assistantMsg("answer"));
+		session.branch(idRoot);
+		const idAbandoned = session.appendMessage(userMsg("abandoned"));
+		session.branch(idAsst);
+		await session.archiveBranch(idAbandoned);
+		await session.restoreArchived(idAbandoned);
+		const activeLeafId = session.getLeafId();
+
+		expect(await session.pruneEmptyBranches()).toBe(1);
+		expect(session.getLeafId()).toBe(activeLeafId);
+		expect(session.getEntries().filter(entry => entry.type === "archive")).toHaveLength(2);
+		const nextId = session.appendMessage(userMsg("continue"));
+		expect(session.getEntry(nextId)?.parentId).toBe(activeLeafId);
+	});
+
 	it("removes a label on the active path when its target is pruned", async () => {
 		const session = SessionManager.inMemory();
 		const idRoot = session.appendMessage(userMsg("root"));
@@ -1101,6 +1119,18 @@ describe("archiveBranch", () => {
 		expect(await session.archiveBranch(idOtherAsst)).toBe(0);
 		expect(session.getEntries()).toHaveLength(afterArchive);
 		expect(await session.restoreArchived(idOtherAsst)).toBe(1);
+		expect(session.getArchivedRootIds()).toEqual([]);
+		expect(treeIds(session.getTree())).toContain(idOtherAsst);
+	});
+
+	it("restores every nested archive covering a descendant", async () => {
+		const { session, idOther, idOtherAsst } = buildTwoAnsweredBranches();
+		await session.archiveBranch(idOtherAsst);
+		await session.archiveBranch(idOther);
+
+		expect(session.getArchivedRootIds()).toEqual([idOtherAsst, idOther]);
+		expect(session.getArchivedRootId(idOtherAsst)).toBe(idOther);
+		expect(await session.restoreArchived(idOtherAsst)).toBe(2);
 		expect(session.getArchivedRootIds()).toEqual([]);
 		expect(treeIds(session.getTree())).toContain(idOtherAsst);
 	});

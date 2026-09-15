@@ -855,7 +855,7 @@ describe("pruneEmptyBranches", () => {
 		expect(session.getEntry(nextId)?.parentId).toBe(activeLeafId);
 	});
 
-	it("removes a label on the active path when its target is pruned", async () => {
+	it("reparents the active path when removing a label whose target is pruned", async () => {
 		const session = SessionManager.inMemory();
 		const idRoot = session.appendMessage(userMsg("root"));
 		const idAsst = session.appendMessage(assistantMsg("answer"));
@@ -863,12 +863,17 @@ describe("pruneEmptyBranches", () => {
 		const idAbandoned = session.appendMessage(userMsg("abandoned"));
 		session.branch(idAsst);
 		const labelId = session.appendLabelChange(idAbandoned, "Pools of Stale Metadata");
+		const idContinuation = session.appendMessage(userMsg("continue on the active branch"));
 
 		expect(await session.pruneEmptyBranches()).toBe(2);
 		const entries = session.getEntries();
 		expect(entries.map(entry => entry.id)).not.toContain(idAbandoned);
 		expect(entries.map(entry => entry.id)).not.toContain(labelId);
 		expect(JSON.stringify(entries)).not.toContain("Pools of Stale Metadata");
+		expect(session.getEntry(idContinuation)?.parentId).toBe(idAsst);
+		expect(session.getBranch().map(entry => entry.id)).toEqual([idRoot, idAsst, idContinuation]);
+		const nextId = session.appendMessage(userMsg("keep going"));
+		expect(session.getEntry(nextId)?.parentId).toBe(idContinuation);
 	});
 });
 

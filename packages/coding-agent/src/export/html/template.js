@@ -737,6 +737,14 @@
         const tree = buildTree();
         const activePathIds = buildActivePathIds(currentLeafId);
         const flatNodes = flattenTree(tree, activePathIds);
+        const visibleNodeIds = new Set(filterNodes(flatNodes, currentLeafId).map(flatNode => flatNode.node.entry.id));
+        const nodesWithVisibleDescendants = new Set();
+        for (let i = flatNodes.length - 1; i >= 0; i--) {
+          const entry = flatNodes[i].node.entry;
+          if (entry.parentId && (visibleNodeIds.has(entry.id) || nodesWithVisibleDescendants.has(entry.id))) {
+            nodesWithVisibleDescendants.add(entry.parentId);
+          }
+        }
         const filtered = filterNodes(hideCollapsedDescendants(flatNodes), currentLeafId);
         const allSidebarRows = projectSidebarRows(flatNodes);
         const sidebarRows = projectSidebarRows(filtered, filterMode !== 'no-tools');
@@ -791,8 +799,9 @@
             // the bullet says "this is your thread", the chevron says "there is
             // more underneath", and collapsing must not cost you the first.
             const collapse = document.createElement('button');
+            collapse.type = 'button';
             collapse.className = 'tree-collapse';
-            if (flatNode.node.children.length > 0) {
+            if (nodesWithVisibleDescendants.has(entry.id)) {
               const isCollapsed = collapsedNodeIds.has(entry.id);
               collapse.textContent = isCollapsed ? '▸' : '▾';
               collapse.title = isCollapsed ? 'Expand branch' : 'Collapse branch';

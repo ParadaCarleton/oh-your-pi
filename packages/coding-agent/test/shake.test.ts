@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { scheduler } from "node:timers/promises";
 import { Agent, type AgentMessage, RESCUE_SHAKE_CONFIG, Tokenizer } from "@oh-my-pi/pi-agent-core";
 import * as compactionModule from "@oh-my-pi/pi-agent-core/compaction";
-import type { AssistantMessage, ImageContent, ToolResultMessage } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, ImageContent, Model, ToolResultMessage } from "@oh-my-pi/pi-ai";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
@@ -485,10 +485,10 @@ describe("AgentSession shake", () => {
 	});
 
 	describe("cache-expired pre-prompt shake", () => {
-		async function seedCodexConversation(ageMs: number): Promise<ToolResultMessage> {
-			authStorage.setRuntimeApiKey("openai-codex", "test-key");
-			const model = getBundledModel("openai-codex", "gpt-5.6-sol");
-			if (!model) throw new Error("Expected built-in ChatGPT model to exist");
+		async function seedConversation(ageMs: number, selectedModel?: Model): Promise<ToolResultMessage> {
+			const model = selectedModel ?? getBundledModel("openai-codex", "gpt-5.6-sol");
+			if (!model) throw new Error("Expected test model to exist");
+			authStorage.setRuntimeApiKey(model.provider, "test-key");
 			apiInfo = { api: model.api, provider: model.provider, model: model.id };
 
 			const completedAt = Date.now() - ageMs;
@@ -525,7 +525,7 @@ describe("AgentSession shake", () => {
 			});
 			await sessionManager.rewriteEntries();
 			const sessionFile = sessionManager.getSessionFile();
-			if (!sessionFile) throw new Error("Expected a persisted ChatGPT session");
+			if (!sessionFile) throw new Error("Expected a persisted session");
 			await session.dispose();
 			sessionManager = await SessionManager.open(sessionFile, tempDir.path());
 			const resumedAgent = new Agent({
@@ -551,7 +551,7 @@ describe("AgentSession shake", () => {
 		}
 
 		it("preserves a warm ChatGPT prefix when the user returns after five minutes", async () => {
-			const result = await seedCodexConversation(5 * 60_000);
+			const result = await seedConversation(5 * 60_000);
 			const shakeSpy = vi.spyOn(session, "shake");
 
 			await session.prompt("continue");
@@ -561,7 +561,7 @@ describe("AgentSession shake", () => {
 		});
 
 		it("shakes an expired ChatGPT prefix before the first resumed user turn", async () => {
-			const result = await seedCodexConversation(60 * 60_000 + 1);
+			const result = await seedConversation(60 * 60_000 + 1);
 			const shakeSpy = vi.spyOn(session, "shake");
 
 			await session.prompt("continue after reopening");
@@ -572,8 +572,18 @@ describe("AgentSession shake", () => {
 			expect(text).toContain("shaken");
 		});
 
+		it("shakes an expired prefix for a model without a provider-specific cache policy", async () => {
+			const result = await seedConversation(5 * 60_000 + 1, createMockModel());
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("continue on a generic model");
+
+			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
+			expect(result.prunedAt).toBeGreaterThan(0);
+		});
+
 		it("shakes before an expired queued user follow-up resumes", async () => {
-			const result = await seedCodexConversation(60 * 60_000 + 1);
+			const result = await seedConversation(60 * 60_000 + 1);
 			const shakeSpy = vi.spyOn(session, "shake");
 
 			await session.followUp("queued after the cache expired");
@@ -585,7 +595,7 @@ describe("AgentSession shake", () => {
 		});
 
 		it("treats a writable collaboration prompt as a user turn", async () => {
-			const result = await seedCodexConversation(60 * 60_000 + 1);
+			const result = await seedConversation(60 * 60_000 + 1);
 			const shakeSpy = vi.spyOn(session, "shake");
 
 			await session.promptCustomMessage({

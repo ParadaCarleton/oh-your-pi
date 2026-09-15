@@ -62,8 +62,10 @@ describe("getPromptCacheExpiryMs", () => {
 		expect(getPromptCacheExpiryMs({ model, cacheTouchedAtMs: TOUCHED_AT_MS, cacheRetention: "short" })).toBe(
 			TOUCHED_AT_MS + THIRTY_MINUTES_MS,
 		);
+		// Long retention keeps the prefix warm for 24h even when the model also
+		// advertises a 30-minute breakpoint minimum.
 		expect(getPromptCacheExpiryMs({ model, cacheTouchedAtMs: TOUCHED_AT_MS, cacheRetention: "long" })).toBe(
-			TOUCHED_AT_MS + THIRTY_MINUTES_MS,
+			TOUCHED_AT_MS + ONE_DAY_MS,
 		);
 	});
 

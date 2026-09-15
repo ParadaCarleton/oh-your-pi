@@ -48,6 +48,7 @@ export function AgentDrawer(props: {
 		let cursor = 0;
 		let carry = "";
 		let acc: readonly SessionEntry[] = [];
+		let published = false;
 		let timer: Timer | null = null;
 		const stopPolling = () => {
 			if (timer !== null) {
@@ -69,14 +70,31 @@ export function AgentDrawer(props: {
 						stopPolling();
 						setFetchError(decision.message);
 						return;
-					case "advance":
+					case "advance": {
+						const previousCursor = cursor;
 						cursor = decision.newSize;
 						carry = decision.carry;
 						if (decision.fresh.length > 0) {
 							acc = [...acc, ...decision.fresh];
+						}
+						// Host caps each reply at 4 MiB. A later archive record can land
+						// in a subsequent chunk, so publishing an incomplete prefix would
+						// briefly reveal a branch the full transcript hides. Wait until
+						// a poll reports no new bytes (caught up to the current EOF),
+						// then publish; live appends after that stay visible immediately.
+						const caughtUp = decision.fresh.length === 0 && decision.newSize === previousCursor;
+						if (caughtUp || published) {
+							published = true;
 							setEntries(visibleTranscriptEntries(acc));
+						} else {
+							// More bytes may remain under the host cap — drain to EOF
+							// before the first paint instead of waiting a full poll tick.
+							queueMicrotask(() => {
+								void poll();
+							});
 						}
 						return;
+					}
 				}
 			} finally {
 				inFlight = false;

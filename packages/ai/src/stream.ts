@@ -1317,11 +1317,15 @@ export function getPromptCacheExpiryMs<TApi extends Api>(options: PromptCacheExp
 		model.api === "azure-openai-responses" ||
 		model.api === "openai-completions"
 	) {
-		const minimumTtlMs = getPromptCacheMinimumTtlMs(model);
-		if (minimumTtlMs !== undefined) return cacheTouchedAtMs + minimumTtlMs;
+		// Explicit long retention must win over the advertised minimum TTL.
+		// Models such as gpt-5.6-sol advertise promptCacheBreakpointTtl "30m"
+		// and supportsLongPromptCacheRetention; with cacheRetention "long" the
+		// wire request keeps the prefix warm for 24h.
 		if (retention === "long" && supportsLongCacheRetention(model)) {
 			return cacheTouchedAtMs + OPENAI_LONG_CACHE_TTL_MS;
 		}
+		const minimumTtlMs = getPromptCacheMinimumTtlMs(model);
+		if (minimumTtlMs !== undefined) return cacheTouchedAtMs + minimumTtlMs;
 		return cacheTouchedAtMs + GENERIC_CACHE_TTL_MS;
 	}
 

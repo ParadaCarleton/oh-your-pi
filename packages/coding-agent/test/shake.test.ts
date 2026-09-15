@@ -609,6 +609,90 @@ describe("AgentSession shake", () => {
 			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
 			expect(result.prunedAt).toBeGreaterThan(0);
 		});
+
+		it("shakes before an expired queued steering turn resumes", async () => {
+			const result = await seedConversation(60 * 60_000 + 1);
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			// Start a hang so steer() lands on the mid-run queue rather than becoming
+			// an immediate prompt; the before-dequeue hook still runs the pre-prompt shake.
+			const hang = Promise.withResolvers<void>();
+			vi.spyOn(session.agent, "prompt").mockImplementation(async () => {
+				await hang.promise;
+			});
+			const streaming = session.prompt("hold the turn");
+			await session.steer("steer after the cache expired");
+			hang.resolve();
+			await streaming;
+			await session.waitForIdle();
+
+			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
+			expect(result.prunedAt).toBeGreaterThan(0);
+		});
+
+		it("ignores a failed assistant turn when deciding whether the cache is cold", async () => {
+			// Warm touch at t=0 (age 70m). A failed turn at t=50m must not move the
+			// deadline past the real 60m ChatGPT expiry.
+			const model = getBundledModel("openai-codex", "gpt-5.6-sol");
+			if (!model) throw new Error("Expected test model to exist");
+			authStorage.setRuntimeApiKey(model.provider, "test-key");
+			apiInfo = { api: model.api, provider: model.provider, model: model.id };
+
+			const warmAt = Date.now() - 70 * 60_000;
+			const failedAt = Date.now() - 20 * 60_000;
+			sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "warm turn" }],
+				timestamp: warmAt - 1,
+			});
+			sessionManager.appendMessage({
+				role: "assistant",
+				content: [{ type: "text", text: `warm answer\n${"tail ".repeat(20_000)}` }],
+				...apiInfo,
+				stopReason: "stop",
+				usage,
+				timestamp: warmAt,
+			});
+			sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "retry after failure" }],
+				timestamp: failedAt - 1,
+			});
+			sessionManager.appendMessage({
+				role: "assistant",
+				content: [{ type: "text", text: "API error" }],
+				...apiInfo,
+				stopReason: "error",
+				errorMessage: "401",
+				usage,
+				timestamp: failedAt,
+			});
+			await sessionManager.rewriteEntries();
+			const sessionFile = sessionManager.getSessionFile();
+			if (!sessionFile) throw new Error("Expected a persisted session");
+			await session.dispose();
+			sessionManager = await SessionManager.open(sessionFile, tempDir.path());
+			const resumedAgent = new Agent({
+				initialState: { model, systemPrompt: ["Test"], tools: [], messages: [] },
+				streamFn: createMockModel({ responses: [{ content: ["Done"] }] }).stream,
+			});
+			session = new AgentSession({
+				agent: resumedAgent,
+				sessionManager,
+				settings: Settings.isolated({
+					"compaction.enabled": false,
+					"compaction.idleEnabled": true,
+				}),
+				modelRegistry,
+			});
+			session.subscribe(event => events.push(event));
+			session.agent.replaceMessages(session.buildDisplaySessionContext().messages);
+
+			const shakeSpy = vi.spyOn(session, "shake");
+			await session.prompt("retry after the real cache expired");
+
+			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
+		});
 	});
 
 	describe("auto-shake strategy", () => {

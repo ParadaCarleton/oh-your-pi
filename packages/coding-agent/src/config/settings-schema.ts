@@ -4200,7 +4200,9 @@ export const SETTINGS_SCHEMA = {
 
 	"eval.autoBackground.thresholdMs": {
 		type: "number",
-		default: 60_000,
+		// Below the default eval cell timeout (30s) so the advertised threshold
+		// is reachable before resolveAutoBackgroundWaitMs clamps to timeout-1s.
+		default: 15_000,
 	},
 
 	// Runtime knobs (consumed by eval backends and the /python slash command)

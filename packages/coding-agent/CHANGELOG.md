@@ -21,6 +21,11 @@
 
 ### Fixed
 
+- Pre-prompt cache shake keys off the last successful provider response and only records a completed uncancelled pass.
+- Eval auto-background threshold defaults to 15s so it precedes the default 30s cell timeout.
+- `/tree` uses one horizontal scroll offset for the whole window so connector columns stay aligned when deep branches are clamped.
+- Imported Claude API-error turns are marked failed (`stopReason: error`) so history tools can treat them as unfinished.
+- Plugin install now relinks over a leftover directory from a prior git install instead of failing with EISDIR.
 - Job results that settle while a `hub wait` (or vibe wait) is watching them are delivered exactly once — either in the wait snapshot or as an async follow-up, never both and never lost.
 - Auto-retry waits past the signed 32-bit timer ceiling (e.g. a month-scale OpenCode Go reset with `retry.waitForUsageReset`) now elapse in full instead of overflowing the timer and retrying immediately.
 - JavaScript eval now reports startup failure if both isolated runtimes fail, instead of executing uncancellable code on the host thread.

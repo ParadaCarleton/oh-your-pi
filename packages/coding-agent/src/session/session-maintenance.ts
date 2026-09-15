@@ -1564,25 +1564,41 @@ export class SessionMaintenance {
 	}
 
 	/**
+	 * Last assistant turn that actually refreshed the provider prompt cache.
+	 * Failed/aborted turns stamp a newer timestamp without a successful provider
+	 * response, so they must not postpone a needed pre-prompt shake.
+	 */
+	#lastSuccessfulCacheTouch(): AssistantMessage | undefined {
+		const messages = this.#host.messages();
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg.role !== "assistant") continue;
+			const assistant = msg;
+			// Custom/agent-local assistant-shaped messages lack provider stop metadata.
+			if (!("stopReason" in assistant)) continue;
+			if (assistant.stopReason === "error" || assistant.stopReason === "aborted") continue;
+			if (!Number.isFinite(assistant.timestamp)) continue;
+			return assistant;
+		}
+		return undefined;
+	}
+
+	/**
 	 * Epoch at which the active model's reusable prompt cache goes cold. Live
 	 * provider state wins while this process remains open; otherwise the last
-	 * durable assistant timestamp makes the decision survive session resume.
+	 * confirmed successful assistant touch makes the decision survive resume.
 	 */
 	promptCacheColdAtMs(): number | undefined {
-		const lastAssistant = this.#host.findLastAssistantMessage();
+		const lastTouch = this.#lastSuccessfulCacheTouch();
 		const model = this.#model;
-		if (!lastAssistant || !model || !Number.isFinite(lastAssistant.timestamp)) return undefined;
-		if (
-			lastAssistant.api !== model.api ||
-			lastAssistant.provider !== model.provider ||
-			lastAssistant.model !== model.id
-		) {
-			return lastAssistant.timestamp;
+		if (!lastTouch || !model || !Number.isFinite(lastTouch.timestamp)) return undefined;
+		if (lastTouch.api !== model.api || lastTouch.provider !== model.provider || lastTouch.model !== model.id) {
+			return lastTouch.timestamp;
 		}
 
 		return getPromptCacheExpiryMs({
 			model,
-			cacheTouchedAtMs: lastAssistant.timestamp,
+			cacheTouchedAtMs: lastTouch.timestamp,
 			cacheRetention: resolveConfiguredCacheRetention(this.#host.settings),
 			providerSessionState: this.#host.providerSessionState,
 		});
@@ -1591,15 +1607,20 @@ export class SessionMaintenance {
 	/** Shake a cold reusable prefix immediately before its next user-authored turn. */
 	async runCacheExpiredPrePromptShakeIfNeeded(): Promise<void> {
 		if (!this.#host.settings.get("compaction.idleEnabled")) return;
-		const lastAssistant = this.#host.findLastAssistantMessage();
+		const lastTouch = this.#lastSuccessfulCacheTouch();
 		const model = this.#model;
-		if (!lastAssistant || !model) return;
-		const shakeKey = `${lastAssistant.timestamp}:${model.api}:${model.provider}:${model.id}`;
+		if (!lastTouch || !model) return;
+		const shakeKey = `${lastTouch.timestamp}:${model.api}:${model.provider}:${model.id}`;
 		if (this.#lastCacheExpiryShakeKey === shakeKey) return;
 		const coldAtMs = this.promptCacheColdAtMs();
 		if (coldAtMs === undefined || Date.now() < coldAtMs) return;
-		this.#lastCacheExpiryShakeKey = shakeKey;
-		await this.#runAutoShake("idle", false, this.#host.promptGeneration(), false, false, undefined, true);
+		const generation = this.#host.promptGeneration();
+		await this.#runAutoShake("idle", false, generation, false, false, undefined, true);
+		// Only record the key after an uncancelled pass; an abort leaves the key
+		// unset so the next attempt still shakes the expired prefix.
+		if (this.#host.promptGeneration() === generation && !this.#host.isDisposed()) {
+			this.#lastCacheExpiryShakeKey = shakeKey;
+		}
 	}
 
 	/**

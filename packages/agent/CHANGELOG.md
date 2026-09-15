@@ -39,6 +39,9 @@
 - Fixed repeated local compaction omitting messages retained before the previous compaction record, while preserving original entry IDs and `/clear` boundaries.
 - Raised remote compaction request timeout from 3 minutes to 5 minutes so long Codex/gpt-6-astra compact streams can finish before the watchdog aborts them.
 - Fixed proxy responses dropping the cost the server reported; recorded costs are kept instead of being recomputed.
+### Fixed
+
+- Queued-message hooks that rewrite history now update the active provider context before the queued turn runs.
 
 ## [18.1.10] - 2026-09-04
 

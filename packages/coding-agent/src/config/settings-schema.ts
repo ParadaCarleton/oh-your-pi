@@ -2815,7 +2815,7 @@ export const SETTINGS_SCHEMA = {
 			tab: "context",
 			group: "Compaction",
 			label: "Idle Compaction",
-			description: "Compact context while idle when token count exceeds threshold",
+			description: "Compact oversized context while idle and shake expired cached context before the next user turn",
 		},
 	},
 

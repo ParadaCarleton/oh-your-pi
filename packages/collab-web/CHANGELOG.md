@@ -9,7 +9,7 @@
 - Transcript links are now allowed by the scheme the browser will actually resolve, so a destination that only becomes `javascript:` after URL normalization is dropped like any other unsafe scheme ([#11562](https://github.com/can1357/oh-my-pi/pull/11562) by [@alphastorm](https://github.com/alphastorm)).
 ### Fixed
 
-- Archived conversation branches no longer remain visible in browser collaboration transcripts.
+- Archived conversation branches no longer remain visible in main or polled subagent browser collaboration transcripts.
 
 ## [18.1.3] - 2026-09-02
 

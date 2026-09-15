@@ -4,9 +4,10 @@
 # =============================================================================
 #
 # This is the dangerous alternative to remove-bazel-symlink.sh. It removes the
-# bazel-oh-my-pi path from the reachable history of every remote branch that
-# currently contains it. Every commit after the accidental add is restacked by
-# jj, so all of those commit IDs change.
+# bazel-oh-my-pi path from the reachable history of every remote branch whose
+# history contains it, even if a later commit already deleted the file. Every
+# commit after the accidental add is restacked by jj, so all of those commit
+# IDs change.
 #
 # The script operates in a temporary clone, not in the user's working tree.
 # It creates and pushes an archive tag for every old branch tip before changing
@@ -92,7 +93,10 @@ find_affected() {
     [[ -z "$branch" || "$branch" == HEAD ]] && continue
     [[ "$branch" == main || "$branch" == master ]] && continue
 
-    if ! git cat-file -e "$REMOTE/$branch:$TARGET" 2>/dev/null; then
+    # Check the complete reachable history, not only the current tree. A
+    # later deletion commit may have removed the file from the tip while the
+    # accidental add still remains in the branch's history.
+    if [[ -z "$(git log -1 --format='%H' "$REMOTE/$branch" -- "$TARGET")" ]]; then
       continue
     fi
 
@@ -176,7 +180,8 @@ git -C "$WORK" fetch --prune --no-tags "$REMOTE" >/dev/null
     tag="archive/bazel-prepurge-${branch//\//-}-$STAMP"
 
     # Re-check the branch and reserve its safety tag before modifying anything.
-    git cat-file -e "$REMOTE/$branch:$TARGET" || die "$branch changed while preparing"
+    [[ -n "$(git log -1 --format='%H' "$REMOTE/$branch" -- "$TARGET")" ]] || \
+      die "$branch changed while preparing"
     if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$tag" >/dev/null 2>&1; then
       die "safety tag already exists: $tag"
     fi

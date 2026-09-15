@@ -35,12 +35,16 @@ SHA per branch only because of rebases:
 | `fix/cache-expired-preprompt-shake` | `d7f2a6502a` | 57 |
 | `omp-fork-prerebase2` | `32cda238b9` | 56 |
 | `omp-fork-prerebase` | `4e52956ba2` | 60 |
+| `pr/prune-archive` | `c7f94208ab` | 23 |
+| `review/pr8301-navigation` | `5805b7097c` | 7 |
 
-No other commit on any branch touches the file. So this is a single amend plus a restack — the
-case jj handles best.
+The automated script scans reachable history, not just branch tips. That matters because
+`pr/prune-archive` and `review/pr8301-navigation` contain rebased copies of the `/prune` add
+commit in their history even though later commits already removed the file from their tips.
+Those branches are included automatically when they still exist.
 
-Note the add commit also contains the real `/prune` work (`session-manager.ts` +116, tests +315,
-etc). Amending removes only the symlink from it; everything else in that commit is preserved.
+Note the add commits also contain the real `/prune` work (`session-manager.ts` +116, tests +315,
+etc). Amending removes only the symlink from them; everything else in those commits is preserved.
 
 **Start with `pr/prune`** — zero descendants, so it rewrites a single commit. It is the perfect
 place to confirm the workflow does what you expect before touching the 57-descendant branch.

@@ -297,6 +297,10 @@
 
 - Fixed edit and write results to report the formatted bytes actually committed by LSP writethrough.
 
+### Breaking Changes
+
+- Upgraded collaboration sessions to protocol version 4 so guests receive archived branch state.
+
 ### Added
 
 - Added `/prewalk restart` to return an active session to its `@default` model and re-arm the one-shot handoff to `@smol`.

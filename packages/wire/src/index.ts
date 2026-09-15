@@ -401,7 +401,7 @@ export type WireFrame = GuestFrame | HostFrame;
  *   grammar would silently drop `ui-request` (asks hang forever on the
  *   host), so they must be rejected at hello.
  */
-export const COLLAB_PROTO = 3;
+export const COLLAB_PROTO = 4;
 
 /** Parameter key used for intent tracing (e.g. prompt explanation/reasoning) */
 export const INTENT_FIELD = "i";

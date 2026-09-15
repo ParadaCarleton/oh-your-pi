@@ -116,6 +116,27 @@ describe("vibe wait completion classification", () => {
 		expect(deliveries).toEqual([{ jobId: turn.jobId, text: "delivered later" }]);
 	});
 
+	it("does not auto-deliver a result returned during an overlapping Hub wait", async () => {
+		const deliveries: Array<{ jobId: string; text: string }> = [];
+		const turn = startTurn({ onDelivery: (jobId, text) => deliveries.push({ jobId, text }) });
+		const pending = VibeSessionRegistry.global().wait(session, { timeoutMs: 1_000 });
+		manager.watchJobs([turn.jobId]);
+		turn.complete("worker result");
+
+		const outcome = await pending;
+		manager.acknowledgeDeliveries([turn.jobId]);
+		manager.unwatchJobs([turn.jobId]);
+		manager.resumeDeliveries([turn.jobId]);
+		await manager.drainDeliveries({ timeoutMs: 1_000 });
+
+		expect(outcome.settled).toEqual([
+			{ id: WORKER, jobId: turn.jobId, status: "completed", resultText: "worker result" },
+		]);
+		expect(manager.isJobResultConsumed(turn.jobId)).toBe(true);
+		expect(deliveries).toEqual([]);
+	});
+
+
 	it("returns a cancelled worker settlement without classifying it as timeout", async () => {
 		const turn = startTurn();
 		const pending = VibeSessionRegistry.global().wait(session, { timeoutMs: 1_000 });

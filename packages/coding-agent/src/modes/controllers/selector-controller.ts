@@ -52,7 +52,8 @@ import {
 	persistForeignSession,
 } from "../../session/foreign-session-import";
 import type { ForeignSessionInfo, ForeignSessionSource } from "../../session/foreign-session-store";
-import type { SessionEntry, SessionMessageEntry, SessionTreeNode } from "../../session/session-entries";
+import { isTranscriptEntry, isUserRequestEntry, type TranscriptEntry } from "../../session/session-context";
+import type { SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { SessionInfo } from "../../session/session-listing";
 import { SessionManager } from "../../session/session-manager";
 import { loadPinnedSessionIds } from "../../session/session-pins";
@@ -79,7 +80,7 @@ import {
 	type ToolSession,
 } from "../../tools";
 import { AskTool, type AskToolDetails, type AskToolInput } from "../../tools/ask";
-import { shortenPath } from "../../tools/render-utils";
+import { sanitizeDisplayWarnings, shortenPath } from "../../tools/render-utils";
 import { ToolAbortError } from "../../tools/tool-errors";
 import { applyHyperlinkSetting } from "../../tui/hyperlink";
 import { copyToClipboard } from "../../utils/clipboard";
@@ -326,6 +327,9 @@ export class SelectorController {
 			}
 			const dirs = { projectDir, agentDir };
 			const initialDoc = await loadWatchdogConfigFile(await resolveAdvisorConfigEditPath(initialScope, dirs));
+			if (initialDoc.warnings?.length) {
+				this.ctx.showWarning(`WATCHDOG.yml: ${sanitizeDisplayWarnings(initialDoc.warnings).join("; ")}`);
+			}
 			// Fullscreen editor on the alternate screen (the /settings idiom): the
 			// overlay holds the alt buffer + mouse tracking; the transcript stays put.
 			const done = () => {
@@ -362,6 +366,9 @@ export class SelectorController {
 						discovered.sharedMaxNotesPerUpdate,
 					);
 					this.ctx.statusLine.invalidate();
+					if (discovered.warnings.length > 0) {
+						this.ctx.showWarning(`WATCHDOG.yml: ${sanitizeDisplayWarnings(discovered.warnings).join("; ")}`);
+					}
 					this.ctx.showStatus(
 						count > 0
 							? `Saved ${scope} WATCHDOG.yml — ${count} advisor${count === 1 ? "" : "s"} active.`
@@ -372,6 +379,9 @@ export class SelectorController {
 				close: done,
 				requestRender: () => this.ctx.ui.requestRender(),
 				notify: message => this.ctx.showStatus(message),
+				// Scope switches happen inside the overlay; the initial file's warnings
+				// were already shown above, so only newly activated files arrive here.
+				warn: message => this.ctx.showWarning(message),
 				getAdvisorStats: () => this.ctx.session.getAdvisorStats().advisors,
 				getUsageReports: async () => this.ctx.session.fetchUsageReports?.() ?? null,
 				resolveActiveAccount: (provider, sessionId) =>
@@ -1295,9 +1305,7 @@ export class SelectorController {
 	}
 
 	showUserMessageSelector(): void {
-		const entries = this.ctx.sessionManager
-			.getBranch()
-			.filter((entry): entry is SessionMessageEntry => entry.type === "message");
+		const entries = this.ctx.sessionManager.getBranch().filter(isTranscriptEntry);
 		if (entries.length === 0) {
 			this.ctx.showStatus("No messages to branch from");
 			return;
@@ -1365,10 +1373,10 @@ export class SelectorController {
 				: (byId.get(entry.parentId)?.children ?? []).filter(node => node.entry.id !== entryId);
 		const paths: BranchVariantPath[] = [];
 		for (const sibling of siblings) {
-			const entries: SessionMessageEntry[] = [];
+			const entries: TranscriptEntry[] = [];
 			let node: SessionTreeNode | undefined = sibling;
 			while (node) {
-				if (node.entry.type === "message") entries.push(node.entry);
+				if (isTranscriptEntry(node.entry)) entries.push(node.entry);
 				node = node.children.at(-1);
 			}
 			if (entries.length > 0) paths.push({ rootId: sibling.entry.id, entries });
@@ -1379,20 +1387,21 @@ export class SelectorController {
 	/**
 	 * Complete an esc-esc rewind in place via `navigateTree`: the session tree
 	 * keeps the old path as a sibling branch instead of forking a child
-	 * session. A user-message target rewinds PAST itself (leaf moves to its
-	 * parent) and its text replaces the editor draft, so it is a real move
-	 * even when it is the current leaf; every other target lands the leaf on
-	 * the entry. `done` closes the fullscreen selector after the transcript is
-	 * rebuilt so the alternate screen never flashes a stale transcript.
+	 * session. A user-request target (plain prompt, user-invoked skill/collab
+	 * prompt) rewinds PAST itself (leaf moves to its parent) and its draft
+	 * replaces the editor text, so it is a real move even when it is the
+	 * current leaf; every other target lands the leaf on the entry. `done`
+	 * closes the fullscreen selector after the transcript is rebuilt so the
+	 * alternate screen never flashes a stale transcript.
 	 */
 	async #rewindFromTranscript(entryId: string, done: () => void): Promise<void> {
 		const entry = this.ctx.sessionManager.getEntry(entryId);
-		if (entry?.type !== "message") {
+		if (!entry || !isTranscriptEntry(entry)) {
 			done();
 			return;
 		}
 
-		const isUserTarget = entry.message.role === "user";
+		const isUserTarget = isUserRequestEntry(entry);
 		const realLeafId = this.ctx.sessionManager.getLeafId();
 		if (entryId === realLeafId && !isUserTarget) {
 			done();
@@ -1427,9 +1436,7 @@ export class SelectorController {
 	}
 
 	showCopySelector(): void {
-		const entries = this.ctx.sessionManager
-			.getBranch()
-			.filter((entry): entry is SessionMessageEntry => entry.type === "message");
+		const entries = this.ctx.sessionManager.getBranch().filter(isTranscriptEntry);
 		if (entries.length === 0) {
 			this.ctx.showStatus("Nothing to copy yet.");
 			return;
@@ -1667,12 +1674,12 @@ export class SelectorController {
 	/**
 	 * First rendered message a pure tree rewind drops, plus the leaf id the
 	 * navigation is expected to land on. `targetId` must sit on the current
-	 * leaf's path; a user-message target rewinds PAST itself (navigateTree
-	 * moves the leaf to its parent and hands the text back as an editor
-	 * draft), every other target keeps the target as the new leaf. Returns
-	 * undefined when the navigation is not a pure rewind or the boundary entry
-	 * cannot anchor an in-place truncation (non-message boundary; custom
-	 * messages render unkeyed components).
+	 * leaf's path; a user-request target rewinds PAST itself (navigateTree
+	 * moves the leaf to its parent and hands the draft back to the editor),
+	 * every other target keeps the target as the new leaf. Returns undefined
+	 * when the navigation is not a pure rewind or the boundary entry cannot
+	 * anchor an in-place truncation (non-message boundary; custom messages
+	 * render unkeyed components, so a skill/collab target takes the replay).
 	 */
 	#treeRewindBoundary(
 		targetId: string,
@@ -1681,7 +1688,7 @@ export class SelectorController {
 		if (!leafId) return undefined;
 		const target = this.ctx.sessionManager.getEntry(targetId);
 		if (!target) return undefined;
-		const rewindsPastTarget = target.type === "message" && target.message.role === "user";
+		const rewindsPastTarget = isUserRequestEntry(target);
 		if (!rewindsPastTarget && target.type === "custom_message") return undefined;
 		// Walk leaf → root: proves the target is on the current path and finds
 		// the first entry the rewind drops.

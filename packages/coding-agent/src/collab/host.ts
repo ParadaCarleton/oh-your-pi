@@ -426,6 +426,9 @@ export class CollabHost {
 			// guest state promptly (debounce + JSON diff dedupe).
 			this.#scheduleStateBroadcast();
 		};
+		this.#ctx.sessionManager.onEntriesReplaced = () => {
+			for (const [peerId, peer] of this.#peers) this.#sendSnapshot(peerId, peer.canWrite);
+		};
 		this.#updateStatusSegment();
 
 		// Publish to the local host registry only after the relay connection
@@ -513,6 +516,7 @@ export class CollabHost {
 				.catch(err => logger.warn("Collab host registry withdrawal failed", { error: String(err) }));
 		}
 		this.#ctx.sessionManager.onEntryAppended = undefined;
+		this.#ctx.sessionManager.onEntriesReplaced = undefined;
 		this.#unsubscribe?.();
 		this.#unsubscribe = undefined;
 		for (const unsubscribe of this.#busUnsubscribers) unsubscribe();
@@ -685,7 +689,18 @@ export class CollabHost {
 		const cleanName = name.trim().slice(0, 64) || `guest-${fromPeer}`;
 		const canWrite = this.#verifyWriteToken(writeToken);
 		this.#peers.set(fromPeer, { name: cleanName, canWrite });
+		this.#sendSnapshot(fromPeer, canWrite);
 
+		this.#ctx.session.emitNotice(
+			"info",
+			`${cleanName} joined the collab session${canWrite ? "" : " (read-only)"}`,
+			"collab",
+		);
+		this.#updateStatusSegment();
+		this.#scheduleStateBroadcast();
+	}
+
+	#sendSnapshot(fromPeer: number, canWrite: boolean): void {
 		// Snapshot and send synchronously: no awaits between snapshot, welcome,
 		// and chunk sends, so subsequent broadcast frames (entry/event/state/bus)
 		// queue behind the snapshot on the same socket and the guest can't
@@ -719,13 +734,6 @@ export class CollabHost {
 				this.#send({ t: "ui-request", request: pending.request }, fromPeer);
 			}
 		}
-		this.#ctx.session.emitNotice(
-			"info",
-			`${cleanName} joined the collab session${canWrite ? "" : " (read-only)"}`,
-			"collab",
-		);
-		this.#updateStatusSegment();
-		this.#scheduleStateBroadcast();
 	}
 
 	/**

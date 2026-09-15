@@ -342,12 +342,12 @@ export class GuestClient {
 				this.#endedReason = null;
 				break;
 			case "snapshot-chunk": {
-				// Stream transcript fragments into the live snapshot. The host
-				// always closes the train with `final: true`; that flip is what
-				// moves the guest from "waiting" to "live".
+				// Keep an incomplete journal private: archive records can arrive in
+				// a later chunk, so exposing the prefix could briefly reveal a branch
+				// the completed snapshot hides. Publish only after the final chunk.
 				this.#entries = [...this.#entries, ...frame.entries];
-				this.#visibleEntries = visibleTranscriptEntries(this.#entries);
 				if (frame.final) {
+					this.#visibleEntries = visibleTranscriptEntries(this.#entries);
 					this.#clearSnapshotProgressTimer();
 					this.#phase = "live";
 				} else {

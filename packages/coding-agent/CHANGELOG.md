@@ -325,6 +325,7 @@
 - Searching `free` in the model picker now finds every zero-cost model, not just the ones with `free` in their id.
 - Preserved hyphenated utility identifiers in structured TTSR AST conditions.
 - Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, and continued navigation.
+- Archived branches retain the ancestry and active bookkeeping needed for safe pruning, nested restoration, branched-session copying, continued navigation, and leak-free exports.
 
 ## [18.1.11] - 2026-09-05
 

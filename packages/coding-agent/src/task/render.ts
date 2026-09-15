@@ -41,7 +41,15 @@ import {
 import { framedBlock, outputBlockContentWidth, renderStatusLine } from "../tui";
 import { repairDoubleEncodedJsonString } from "./repair-args";
 import { subprocessToolRegistry } from "./subprocess-tool-registry";
-import type { AgentProgress, SingleResult, TaskItem, TaskParams, TaskToolDetails, YieldItem } from "./types";
+import {
+	type AgentProgress,
+	isTaskToolDetails,
+	type SingleResult,
+	type TaskItem,
+	type TaskParams,
+	type TaskToolDetails,
+	type YieldItem,
+} from "./types";
 import { assembleYieldResult } from "./yield-assembly";
 
 /** Render context threaded in from `ToolExecutionComponent.#buildRenderContext`. */
@@ -1792,15 +1800,6 @@ export function renderResult(
 			width,
 		};
 	});
-}
-
-function isTaskToolDetails(value: unknown): value is TaskToolDetails {
-	return (
-		Boolean(value) &&
-		typeof value === "object" &&
-		"results" in (value as TaskToolDetails) &&
-		Array.isArray((value as TaskToolDetails).results)
-	);
 }
 
 /**

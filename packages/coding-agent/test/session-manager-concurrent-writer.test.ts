@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime, spyOn, vi } from "bun:test";
+import * as fs from "node:fs";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { FileSessionStorage } from "@oh-my-pi/pi-coding-agent/session/session-storage";
 import { TempDir } from "@oh-my-pi/pi-utils";
@@ -19,6 +20,8 @@ describe("SessionManager with a concurrent writer on the same file", () => {
 	});
 
 	afterEach(() => {
+		setSystemTime();
+		vi.restoreAllMocks();
 		temp[Symbol.dispose]();
 	});
 
@@ -52,5 +55,31 @@ describe("SessionManager with a concurrent writer on the same file", () => {
 		first.appendMessage({ role: "user", content: "still alive", timestamp: Date.now() });
 		await first.flush();
 		expect(await Bun.file(sessionFile).text()).toContain("still alive");
+	});
+
+	it("keeps warning while the session stays unsaved", async () => {
+		const manager = SessionManager.create(sessionDir, sessionDir, storage);
+		await manager.ensureOnDisk();
+		const warnings: string[] = [];
+		manager.onPersistenceError(error => warnings.push(error.message));
+
+		const failure = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+		spyOn(storage, "writeTextAtomic").mockImplementation(() => Promise.reject(failure));
+		spyOn(storage, "writeTextSync").mockImplementation(() => {
+			throw failure;
+		});
+		spyOn(fs, "writeSync").mockImplementation(() => {
+			throw failure;
+		});
+
+		manager.appendMessage({ role: "user", content: "first unsaved turn", timestamp: Date.now() });
+		await manager.flush().catch(() => undefined);
+		expect(warnings).toHaveLength(1);
+
+		// Same broken store, a minute of further work: the user hears about it again.
+		setSystemTime(new Date(Date.now() + 60_000));
+		manager.appendMessage({ role: "user", content: "later unsaved turn", timestamp: Date.now() });
+		await manager.flush().catch(() => undefined);
+		expect(warnings.length).toBeGreaterThan(1);
 	});
 });

@@ -1585,7 +1585,7 @@ export class InteractiveMode implements InteractiveModeContext {
 					TRUNCATE_LENGTHS.LINE,
 				);
 				this.showWarning(
-					`Session persistence failed: ${detail}. Unsaved entries remain in memory; persistence will retry on the next entry.`,
+					`Session is NOT being saved: ${detail}. Entries are held in memory only and are lost if this window exits; persistence retries on the next entry.`,
 				);
 			}),
 			this.sessionManager.onSessionNameChanged(() => {

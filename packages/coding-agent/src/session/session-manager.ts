@@ -112,6 +112,8 @@ import { recordSessionTitle } from "./title-index";
 const JSONL_SUFFIX_LENGTH = ".jsonl".length;
 /** Consecutive reconcile republishes before a contended file is left to the disk-failure path. */
 const MAX_RECONCILE_ATTEMPTS = 5;
+/** Quiet period between repeat warnings while a session stays unsaved. */
+const DISK_FAILURE_RENOTIFY_MS = 30_000;
 const DRAFT_ONLY_SESSION_MARKER = ".draft-only-session";
 const DISCARDED_ENTRY_BRANCH_MARKER = "discarded-entry-branch";
 
@@ -757,6 +759,8 @@ export class SessionManager {
 	#diskFailureLogged = false;
 	/** FIFO reservation for atomic batches and authoritative recovery. */
 	#atomicPersistenceTail: Promise<void> = Promise.resolve();
+	/** When the user was last told this session is not being saved. */
+	#diskFailureNotifiedAt = 0;
 	/** Observer notifications withheld until their entries are proven durable. */
 	#pendingDurabilityNotifications: SessionEntry[] = [];
 	/** Bumped on every sync rewrite / chain reset so stale queued tasks become no-ops. */
@@ -876,6 +880,12 @@ export class SessionManager {
 				stack: error.stack,
 			});
 			this.#notifyPersistenceErrorObservers(error);
+			this.#diskFailureNotifiedAt = Date.now();
+		} else if (Date.now() - this.#diskFailureNotifiedAt >= DISK_FAILURE_RENOTIFY_MS) {
+			// A session that cannot save must keep saying so: one warning at the
+			// start of a long unsaved stretch scrolls away unread.
+			this.#notifyPersistenceErrorObservers(this.#diskFailure);
+			this.#diskFailureNotifiedAt = Date.now();
 		}
 
 		return this.#diskFailure;

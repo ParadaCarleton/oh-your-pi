@@ -348,10 +348,11 @@ describe("SessionManager cross-process rewrite freshness", () => {
 			const reopened = await SessionManager.open(sessionFile, tempDir.path(), new FileSessionStorage(), {
 				suppressBreadcrumb: true,
 			});
-			const userTurns = reopened
-				.getEntries()
-				.filter(entry => entry.type === "message" && entry.message.role === "user")
-				.map(entry => (entry.type === "message" ? entry.message.content : undefined));
+			const userTurns = reopened.getEntries().flatMap(entry => {
+				if (entry.type !== "message" || entry.message.role !== "user") return [];
+				const { content } = entry.message;
+				return typeof content === "string" ? [content] : [];
+			});
 			expect(userTurns).toContain("durable second-writer turn");
 			expect(userTurns).toContain("first-writer turn");
 			await reopened.close();

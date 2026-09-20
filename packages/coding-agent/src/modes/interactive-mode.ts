@@ -814,6 +814,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	autoCompactionLoader: Loader | undefined = undefined;
 	retryLoader: Loader | undefined = undefined;
 	#pendingWorkingMessage: string | undefined;
+	/** Input stays disabled for the rest of the process once persistence dies. */
+	#persistenceHalted = false;
 	#retryHintRow: Text | undefined;
 	#workingMessageAccentCacheKey?: WorkingMessageAccentCacheKey;
 	#workingMessageAccentCacheValue?: WorkingMessageAccent;
@@ -1584,9 +1586,7 @@ export class InteractiveMode implements InteractiveModeContext {
 					replaceTabs(sanitizeText(error.message)).replace(/[\r\n]+/g, " "),
 					TRUNCATE_LENGTHS.LINE,
 				);
-				this.showWarning(
-					`Session is NOT being saved: ${detail}. Entries are held in memory only and are lost if this window exits; persistence retries on the next entry.`,
-				);
+				this.#haltForPersistenceFailure(detail);
 			}),
 			this.sessionManager.onSessionNameChanged(() => {
 				setSessionTerminalTitle(this.sessionManager.getSessionName(), this.sessionManager.getCwd());
@@ -1788,7 +1788,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		// initial CLI prompt and a user submission both flow with
 		// `streamingBehavior: "steer"`, so whichever lands second queues into the
 		// other's turn instead of dying.
-		this.editor.disableSubmit = false;
+		if (!this.#persistenceHalted) this.editor.disableSubmit = false;
 	}
 
 	/** Reload the title-generation system prompt override for the provided working
@@ -5905,14 +5905,15 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#uiHelpers.showError(message);
 	}
 
-	showPinnedError(message: string): void {
+	showPinnedError(message: string, options?: { footer?: string }): void {
 		this.#dismissPlanReview();
 		this.errorBannerContainer.clear();
-		this.errorBannerContainer.addChild(new ErrorBannerComponent(message));
+		this.errorBannerContainer.addChild(new ErrorBannerComponent(message, options));
 		this.ui.requestRender();
 	}
 
 	clearPinnedError(): void {
+		if (this.#persistenceHalted) return;
 		if (this.errorBannerContainer.children.length === 0) return;
 		this.errorBannerContainer.clear();
 		this.ui.requestRender();
@@ -5920,6 +5921,22 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	showWarning(message: string, options?: { hideWithToolActivity?: boolean }): void {
 		this.#uiHelpers.showWarning(message, options);
+	}
+
+	/**
+	 * Stop the session dead when its entries can no longer reach disk: input is
+	 * disabled and a red banner stays up until the user restarts.
+	 */
+	#haltForPersistenceFailure(detail: string): void {
+		if (this.#persistenceHalted) return;
+		this.#persistenceHalted = true;
+		this.editor.disableSubmit = true;
+		this.statusLine.setHookStatus("persistence", "NOT SAVING");
+		this.showPinnedError(
+			`SESSION IS NOT BEING SAVED — ${detail}. Anything typed from here would be lost.`,
+			{ footer: "Input is disabled. Copy what you need, then restart omp." },
+		);
+		this.ui.requestRender();
 	}
 
 	#handleLspStartupEvent(event: LspStartupEvent): void {

@@ -1548,6 +1548,7 @@
 - Preserve effective context and output limits when model overrides change unrelated settings, such as thinking effort levels.
 ### Fixed
 
-- Auto-shake now runs before the first user message after the active model's prompt cache expires, including after reopening a session.
+- Auto-shake now runs before the first user message after the active model's prompt cache expires, including after reopening a session ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
+- Aborted and errored turns no longer postpone that auto-shake, so a retry after a failed request still starts from a rewritten prefix ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 
 Older entries are archived in [packages/coding-agent/CHANGELOG.md@47b1156699bb](https://github.com/can1357/oh-my-pi/blob/47b1156699bb852a157216acec52ff743d992dca/packages/coding-agent/CHANGELOG.md).

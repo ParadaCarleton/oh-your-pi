@@ -6,6 +6,10 @@
 
 - Added provider-aware prompt-cache expiry reporting for cache-cold session maintenance.
 
+### Fixed
+
+- Prompt-cache expiry no longer cuts 24-hour OpenAI retention down to the advertised 30-minute minimum, so a long-retention prefix stays warm for its full window ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
+
 ## [18.1.14] - 2026-09-07
 
 ### Fixed

@@ -4,7 +4,8 @@
 
 ### Fixed
 
-- Auto-shake now runs before the first user message after the active model's prompt cache expires, including after reopening a session.
+- Auto-shake now runs before the first user message after the active model's prompt cache expires, including after reopening a session ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
+- Aborted and errored turns no longer postpone that auto-shake, so a retry after a failed request still starts from a rewritten prefix ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 
 ## [18.1.14] - 2026-09-07
 

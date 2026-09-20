@@ -6,9 +6,9 @@ import { Command, Flags } from "@oh-my-pi/pi-utils/cli";
 import { gcHelp as commandHelp } from "../cli/command-help";
 import { collectGcErrors, type GcCommandArgs, type GcCommandFlags, runGcCommand } from "../cli/gc-cli";
 
-function parsePruneMode(value: string | undefined): GcCommandFlags["pruneEmptySessions"] {
+function parseSessionsMode(value: string | undefined): GcCommandFlags["pruneEmptySessions"] {
 	if (value === undefined || value === "archive" || value === "delete") return value;
-	throw new Error(`Unsupported prune mode: ${value}`);
+	throw new Error(`Unsupported sessions mode: ${value}`);
 }
 
 export default class Gc extends Command {
@@ -19,11 +19,9 @@ export default class Gc extends Command {
 		"agent-dir": Flags.string({ description: "Agent directory to maintain" }),
 		blobs: Flags.boolean({ description: "Sweep unreferenced blobs" }),
 		archive: Flags.boolean({ description: "Archive cold sessions" }),
-		"merge-sessions": Flags.boolean({
-			description: "Reunite sessions split across files: duplicate copies and forks",
-		}),
-		prune: Flags.string({
-			description: "Prune sessions nobody asked for and nobody answered: archive (default) or delete",
+		sessions: Flags.string({
+			description:
+				"Repair session files: reunite duplicate copies and forks, then prune conversations nobody answered — archive (default) or delete",
 			options: ["archive", "delete"],
 			optionalValue: "archive",
 		}),
@@ -42,8 +40,8 @@ export default class Gc extends Command {
 				agentDir: flags["agent-dir"],
 				blobs: flags.blobs,
 				archive: flags.archive,
-				mergeSessions: flags["merge-sessions"],
-				pruneEmptySessions: parsePruneMode(flags.prune),
+				mergeSessions: flags.sessions !== undefined,
+				pruneEmptySessions: parseSessionsMode(flags.sessions),
 				wal: flags.wal,
 				coldArchiveAfterDays: flags["cold-archive-after-days"],
 				retainNewestGlobal: flags["retain-newest-global"],

@@ -1213,12 +1213,30 @@ export class SessionMaintenance {
 	}
 
 	/**
+	 * Last assistant turn that reached the provider, so it can have
+	 * warmed the reusable prefix. An aborted or errored turn never wrote a cache
+	 * entry, and counting its fresh timestamp as "cache touched" would postpone a
+	 * shake the cold cache already needs.
+	 */
+	#lastCacheWarmingAssistantMessage(): AssistantMessage | undefined {
+		const messages = this.#host.messages();
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const message = messages[i];
+			if (message.role !== "assistant") continue;
+			const assistant = message as AssistantMessage;
+			if (assistant.stopReason === "aborted" || assistant.stopReason === "error") continue;
+			return assistant;
+		}
+		return undefined;
+	}
+
+	/**
 	 * Epoch at which the active model's reusable prompt cache goes cold. Live
 	 * provider state wins while this process remains open; otherwise the last
 	 * durable assistant timestamp makes the decision survive session resume.
 	 */
 	promptCacheColdAtMs(): number | undefined {
-		const lastAssistant = this.#host.findLastAssistantMessage();
+		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
 		const model = this.#model;
 		if (!lastAssistant || !model || !Number.isFinite(lastAssistant.timestamp)) return undefined;
 		if (
@@ -1240,7 +1258,7 @@ export class SessionMaintenance {
 	/** Shake a cold reusable prefix immediately before its next user-authored turn. */
 	async runCacheExpiredPrePromptShakeIfNeeded(): Promise<void> {
 		if (!this.#host.settings.get("compaction.idleEnabled")) return;
-		const lastAssistant = this.#host.findLastAssistantMessage();
+		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
 		const model = this.#model;
 		if (!lastAssistant || !model) return;
 		const shakeKey = `${lastAssistant.timestamp}:${model.api}:${model.provider}:${model.id}`;

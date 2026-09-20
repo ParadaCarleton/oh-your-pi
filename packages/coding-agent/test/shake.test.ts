@@ -594,6 +594,29 @@ describe("AgentSession shake", () => {
 			expect(result.prunedAt).toBeGreaterThan(0);
 		});
 
+		it("still shakes when a failed turn left a fresh timestamp on a cold cache", async () => {
+			const result = await seedConversation(60 * 60_000 + 1);
+			// An aborted turn never reached the provider, so it cannot have warmed
+			// the prefix — its fresh timestamp must not postpone the shake.
+			session.agent.replaceMessages([
+				...session.messages,
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "interrupted" }],
+					...apiInfo,
+					stopReason: "aborted",
+					usage,
+					timestamp: Date.now(),
+				},
+			]);
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("continue after the failed turn");
+
+			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
+			expect(result.prunedAt).toBeGreaterThan(0);
+		});
+
 		it("treats a writable collaboration prompt as a user turn", async () => {
 			const result = await seedConversation(60 * 60_000 + 1);
 			const shakeSpy = vi.spyOn(session, "shake");

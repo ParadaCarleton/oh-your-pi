@@ -1316,12 +1316,12 @@ export function getPromptCacheExpiryMs<TApi extends Api>(options: PromptCacheExp
 		model.api === "azure-openai-responses" ||
 		model.api === "openai-completions"
 	) {
-		const minimumTtlMs = getPromptCacheMinimumTtlMs(model);
-		if (minimumTtlMs !== undefined) return cacheTouchedAtMs + minimumTtlMs;
-		if (retention === "long" && supportsLongCacheRetention(model)) {
-			return cacheTouchedAtMs + OPENAI_LONG_CACHE_TTL_MS;
-		}
-		return cacheTouchedAtMs + GENERIC_CACHE_TTL_MS;
+		const retentionTtlMs =
+			retention === "long" && supportsLongCacheRetention(model) ? OPENAI_LONG_CACHE_TTL_MS : GENERIC_CACHE_TTL_MS;
+		// `promptCacheBreakpointTtl` advertises a *minimum* lifetime, so it raises a
+		// shorter window but never truncates a longer retention window.
+		const minimumTtlMs = getPromptCacheMinimumTtlMs(model) ?? 0;
+		return cacheTouchedAtMs + Math.max(retentionTtlMs, minimumTtlMs);
 	}
 
 	return cacheTouchedAtMs + GENERIC_CACHE_TTL_MS;

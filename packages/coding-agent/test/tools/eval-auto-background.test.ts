@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import type { AgentToolContext } from "@oh-my-pi/pi-agent-core";
 import { AsyncJobManager } from "@oh-my-pi/pi-coding-agent/async";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import type { ExecutorBackendExecOptions, ExecutorBackendResult } from "@oh-my-pi/pi-coding-agent/eval";
 import * as evalIndex from "@oh-my-pi/pi-coding-agent/eval";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
@@ -18,7 +19,7 @@ function makeSession(settings: Settings, asyncJobManager: AsyncJobManager): Tool
 	};
 }
 
-function baseResult(overrides: Record<string, unknown> = {}) {
+function baseResult(overrides: Partial<ExecutorBackendResult> = {}): ExecutorBackendResult {
 	return {
 		output: "",
 		exitCode: 0,
@@ -29,7 +30,7 @@ function baseResult(overrides: Record<string, unknown> = {}) {
 		totalBytes: 0,
 		outputLines: 0,
 		outputBytes: 0,
-		displayOutputs: [] as unknown[],
+		displayOutputs: [],
 		...overrides,
 	};
 }
@@ -41,14 +42,13 @@ function baseResult(overrides: Record<string, unknown> = {}) {
  */
 function mockGatedCell(finalOutput: string): { release: () => void } {
 	const gate = Promise.withResolvers<void>();
-	vi.spyOn(evalIndex.jsBackend, "execute").mockImplementation((async (
-		_code: string,
-		options: { onChunk?: (chunk: string) => void },
-	) => {
-		options.onChunk?.("start\n");
-		await gate.promise;
-		return baseResult({ output: finalOutput });
-	}) as never);
+	vi.spyOn(evalIndex.jsBackend, "execute").mockImplementation(
+		async (_code: string, options: ExecutorBackendExecOptions): Promise<ExecutorBackendResult> => {
+			options.onChunk("start\n");
+			await gate.promise;
+			return baseResult({ output: finalOutput });
+		},
+	);
 	return { release: gate.resolve };
 }
 
@@ -94,8 +94,9 @@ describe("EvalTool auto-background", () => {
 				deliveries.push(text);
 			},
 		});
-		vi.spyOn(evalIndex.jsBackend, "execute").mockImplementation((async () =>
-			baseResult({ output: "quick\n" })) as never);
+		vi.spyOn(evalIndex.jsBackend, "execute").mockImplementation(
+			async (): Promise<ExecutorBackendResult> => baseResult({ output: "quick\n" }),
+		);
 
 		const tool = new EvalTool(
 			makeSession(
@@ -182,15 +183,14 @@ describe("EvalTool auto-background", () => {
 		const gate = Promise.withResolvers<void>();
 		let executionSignal: AbortSignal | undefined;
 		vi.spyOn(evalIndex.pythonBackend, "isAvailable").mockResolvedValue(true);
-		const pythonExecuteSpy = vi.spyOn(evalIndex.pythonBackend, "execute").mockImplementation((async (
-			_code: string,
-			options: { signal?: AbortSignal; onChunk: (chunk: string) => void },
-		) => {
-			executionSignal = options.signal;
-			options.onChunk("python start\n");
-			await gate.promise;
-			return baseResult({ output: "python start\npython done\n" });
-		}) as never);
+		const pythonExecuteSpy = vi.spyOn(evalIndex.pythonBackend, "execute").mockImplementation(
+			async (_code: string, options: ExecutorBackendExecOptions): Promise<ExecutorBackendResult> => {
+				executionSignal = options.signal;
+				options.onChunk("python start\n");
+				await gate.promise;
+				return baseResult({ output: "python start\npython done\n" });
+			},
+		);
 		const jsExecuteSpy = vi.spyOn(evalIndex.jsBackend, "execute");
 
 		const tool = new EvalTool(

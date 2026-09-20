@@ -23,6 +23,8 @@
 ### Changed
 
 - Startup no longer composes the entire bundled model catalog to validate kind-role fallback chains; provider-qualified selectors are checked against their providers' slices.
+- Long-running Python and JavaScript eval cells now automatically background by default and deliver their results when finished.
+
 ### Changed
 
 - npm and compiled builds embed `models.json` as JSON text instead of an object literal, cutting ~100 ms from bundle launch.
@@ -794,9 +796,6 @@
 - Session rewrites preserve open-reader snapshots and replacement identity when a rename needs an EPERM fallback.
 - Fixed WorkPool children retaining a stale Gemini-formatted `yield` declaration when pooled items were installed or cleared.
 - Preserve effective context and output limits when model overrides change unrelated settings, such as thinking effort levels.
-### Changed
-
-- Long-running Python and JavaScript eval cells now automatically background by default and deliver their results when finished.
 
 ## [18.1.14] - 2026-09-07
 

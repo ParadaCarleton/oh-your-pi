@@ -14,6 +14,9 @@ provider "openai-codex" {
 	// `with_config_overrides`); models without a curated or live maximum
 	// pass through. Replaces the provider check in model-registry.ts.
 	clamp-context-override #true
+	// Codex holds its reusable prefix for an hour, unlike the 5m default the
+	// plain Responses API gives uncached callers.
+	prompt-cache-ttl "1h"
 	// Subscription (Codex) discovery reports no pricing; the curated Daybreak
 	// aliases carry the standard GPT-5.6 Sol/Cyber API list price so cost
 	// display reads as API-equivalent spend. The `-wm` worker sibling bills

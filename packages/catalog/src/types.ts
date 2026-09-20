@@ -189,6 +189,12 @@ export type OpenAIReasoningDisableMode =
 export type OpenAIStreamMarkupHealingPattern = "kimi" | "dsml" | "qwen" | "thinking";
 
 /**
+ * Reusable prompt-cache lifetime advertised by a provider, mirroring the
+ * `prompt-cache-ttl` / `prompt-cache-long-ttl` KDL axes.
+ */
+export type PromptCacheTtl = "5m" | "30m" | "1h" | "24h";
+
+/**
  * Compatibility settings for openai-completions API.
  * Use this to override URL-based auto-detection for custom providers.
  */
@@ -353,6 +359,13 @@ export interface OpenAICompat {
 	supportsPromptCacheBreakpoints?: boolean;
 	/** The only currently supported minimum lifetime for explicit OpenAI cache breakpoints. */
 	promptCacheBreakpointTtl?: "30m";
+	/**
+	 * Lifetime of this endpoint's reusable prompt cache. Consumers treat the
+	 * cache as cold after it elapses; absent, a generic 5m floor applies.
+	 */
+	promptCacheTtl?: PromptCacheTtl;
+	/** Lifetime once the caller opts into long cache retention. */
+	promptCacheLongTtl?: PromptCacheTtl;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: auto-detected per provider/baseUrl (conservative for unknown providers). */
 	supportsStrictMode?: boolean;
 	/**
@@ -490,6 +503,10 @@ export interface AnthropicCompat {
 	supportsEagerToolInputStreaming?: boolean;
 	/** Whether long prompt-cache retention (`ttl: "1h"`) is supported. Default: true for canonical Anthropic API. */
 	supportsLongCacheRetention?: boolean;
+	/** Lifetime of the reusable prompt cache; absent, the Anthropic 5m default applies. */
+	promptCacheTtl?: PromptCacheTtl;
+	/** Lifetime once `ttl: "1h"` long retention is requested. */
+	promptCacheLongTtl?: PromptCacheTtl;
 	/**
 	 * Whether mid-conversation `role: "system"` messages are accepted in the
 	 * `messages` array. When unset, auto-detected from model and deployment policy.
@@ -587,6 +604,10 @@ export interface BedrockCompat {
 	promptCacheMode?: "none" | "automatic" | "explicit";
 	/** Whether explicit cachePoint blocks accept `ttl: "1h"`; omitted TTL means Bedrock's 5-minute default. */
 	supportsLongPromptCacheRetention?: boolean;
+	/** Lifetime of the reusable prompt cache; absent, Bedrock's 5m default applies. */
+	promptCacheTtl?: PromptCacheTtl;
+	/** Lifetime once explicit cachePoint blocks request `ttl: "1h"`. */
+	promptCacheLongTtl?: PromptCacheTtl;
 	/**
 	 * Bedrock-enforced minimum prompt-prefix tokens for an effective checkpoint.
 	 * Capability metadata only: emitters must not estimate local token counts.
@@ -705,6 +726,10 @@ export interface ResolvedOpenAISharedCompat {
 	supportsPromptCacheBreakpoints?: boolean;
 	/** Minimum cache lifetime supported by explicit OpenAI prompt-cache breakpoints. */
 	promptCacheBreakpointTtl?: "30m";
+	/** Lifetime of the reusable prompt cache; absent, a generic 5m floor applies. */
+	promptCacheTtl?: PromptCacheTtl;
+	/** Lifetime once the caller opts into long cache retention. */
+	promptCacheLongTtl?: PromptCacheTtl;
 	/** The model sits behind OpenRouter (routing prefs and max-token omission apply). */
 	isOpenRouterHost: boolean;
 	/** Whether this endpoint needs a max-token field even when caller did not set one. */
@@ -774,6 +799,8 @@ export type ResolvedOpenAICompat = ResolvedOpenAISharedCompat &
 			| "promptCacheSessionHeader"
 			| "supportsPromptCacheBreakpoints"
 			| "promptCacheBreakpointTtl"
+			| "promptCacheTtl"
+			| "promptCacheLongTtl"
 			| "openRouterRouting"
 			| "isOpenRouterHost"
 			| "supportsStrictMode"

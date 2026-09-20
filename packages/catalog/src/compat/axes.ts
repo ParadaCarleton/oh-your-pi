@@ -42,6 +42,12 @@ export interface AxisDef {
 const OAI = ["openai", "openai-responses"] as const;
 const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
+/**
+ * Reusable prompt-cache lifetimes a provider may advertise. Durations, not
+ * milliseconds, so the KDL stays readable; `stream.ts` converts.
+ */
+const CACHE_TTLS = ["5m", "30m", "1h", "24h"] as const;
+
 /** Effort tiers accepted by taxonomy collapse/override vocabulary (`Effort` ∪ `"off"`). */
 export const EFFORT_TIERS: readonly string[] = [...EFFORTS, "off"];
 
@@ -103,6 +109,8 @@ export const AXES: Readonly<Record<string, AxisDef>> = {
 	"native-kimi-k3-reasoning": wire("nativeKimiK3Reasoning", ["openai"]),
 	"omit-reasoning-effort": wire("omitReasoningEffort", OAI),
 	"prompt-cache-breakpoint-ttl": wire("promptCacheBreakpointTtl", OAI, "scalar", ["30m"]),
+	"prompt-cache-ttl": wire("promptCacheTtl", [...OAI, "anthropic", "bedrock"], "scalar", CACHE_TTLS),
+	"prompt-cache-long-ttl": wire("promptCacheLongTtl", [...OAI, "anthropic", "bedrock"], "scalar", CACHE_TTLS),
 	"prompt-cache-session-header": wire("promptCacheSessionHeader", OAI, "scalar", ["x-grok-conv-id"]),
 	"qwen-preserve-thinking": wire("qwenPreserveThinking", ["openai"]),
 	"reject-root-object-union": wire("rejectRootObjectUnion", OAI),

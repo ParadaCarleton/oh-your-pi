@@ -15,6 +15,7 @@ import {
 } from "@oh-my-pi/pi-catalog/model-thinking";
 import { CATALOG_PROVIDERS, type ProviderCatalogEntry } from "@oh-my-pi/pi-catalog/provider-models";
 import { CODEX_BASE_URL } from "@oh-my-pi/pi-catalog/wire/codex";
+import type { PromptCacheTtl } from "@oh-my-pi/pi-catalog/types";
 import { $env, $pickenv, getProviderInFlightRoot, isEnoent, logger } from "@oh-my-pi/pi-utils";
 import { getCustomApi } from "./api-registry";
 import { createAuthRetryKeyState, isApiKeyResolver, resolveNextAuthRetryKey } from "./auth-retry";
@@ -1160,8 +1161,6 @@ const ANTHROPIC_CACHE_REFRESH_LEAD_MS = 15_000;
 const ANTHROPIC_CACHE_REFRESH_LIMIT = 3;
 const ANTHROPIC_CACHE_REFRESH_STATE_KEY = "anthropic-cache-refresh";
 const THIRTY_MINUTE_CACHE_TTL_MS = 30 * 60_000;
-const ONE_HOUR_CACHE_TTL_MS = 60 * 60_000;
-const OPENAI_LONG_CACHE_TTL_MS = 24 * ONE_HOUR_CACHE_TTL_MS;
 const GENERIC_CACHE_TTL_MS = 5 * 60_000;
 
 interface AnthropicCacheRefreshPlan {
@@ -1288,43 +1287,44 @@ function getPromptCacheMinimumTtlMs(model: Model): number | undefined {
 	return compat.promptCacheBreakpointTtl === "30m" ? THIRTY_MINUTE_CACHE_TTL_MS : undefined;
 }
 
+const CACHE_TTL_MS: Readonly<Record<PromptCacheTtl, number>> = {
+	"5m": 5 * 60_000,
+	"30m": 30 * 60_000,
+	"1h": 60 * 60_000,
+	"24h": 24 * 60 * 60_000,
+};
+
+function compatCacheTtlMs(model: Model, key: "promptCacheTtl" | "promptCacheLongTtl"): number | undefined {
+	const compat = model.compat;
+	if (compat === undefined || !(key in compat)) return undefined;
+	const ttl = (compat as Record<string, unknown>)[key];
+	return typeof ttl === "string" && ttl in CACHE_TTL_MS ? CACHE_TTL_MS[ttl as PromptCacheTtl] : undefined;
+}
+
 /**
  * Epoch at which callers should treat a model's reusable prompt cache as
- * expired. Provider-owned live state wins, followed by advertised minimum
- * lifetimes and explicit retention policies, with a 5m generic fallback.
+ * expired. Provider-owned live state wins, followed by the KDL-resolved
+ * lifetimes and advertised minimums, with a 5m generic fallback.
  */
 export function getPromptCacheExpiryMs<TApi extends Api>(options: PromptCacheExpiryOptions<TApi>): number {
 	const { model, cacheTouchedAtMs } = options;
 	const retention = resolveCacheRetention(options.cacheRetention);
 	if (retention === "none") return cacheTouchedAtMs;
 
-	if (model.api === "openai-codex-responses") return cacheTouchedAtMs + ONE_HOUR_CACHE_TTL_MS;
-
-	if (model.api === "anthropic-messages" || model.api === "bedrock-converse-stream") {
-		if (model.api === "anthropic-messages" && model.provider === "anthropic") {
-			const liveColdAtMs = getPromptCacheColdAtMs(options.providerSessionState);
-			if (liveColdAtMs !== undefined) return liveColdAtMs;
-		}
-		if (retention === "long" && supportsLongCacheRetention(model)) {
-			return cacheTouchedAtMs + ONE_HOUR_CACHE_TTL_MS;
-		}
-		return cacheTouchedAtMs + ANTHROPIC_CACHE_TTL_MS;
+	if (model.api === "anthropic-messages" && model.provider === "anthropic") {
+		const liveColdAtMs = getPromptCacheColdAtMs(options.providerSessionState);
+		if (liveColdAtMs !== undefined) return liveColdAtMs;
 	}
 
-	if (
-		model.api === "openai-responses" ||
-		model.api === "azure-openai-responses" ||
-		model.api === "openai-completions"
-	) {
-		const retentionTtlMs =
-			retention === "long" && supportsLongCacheRetention(model) ? OPENAI_LONG_CACHE_TTL_MS : GENERIC_CACHE_TTL_MS;
-		// `promptCacheBreakpointTtl` advertises a *minimum* lifetime, so it raises a
-		// shorter window but never truncates a longer retention window.
-		const minimumTtlMs = getPromptCacheMinimumTtlMs(model) ?? 0;
-		return cacheTouchedAtMs + Math.max(retentionTtlMs, minimumTtlMs);
-	}
-
-	return cacheTouchedAtMs + GENERIC_CACHE_TTL_MS;
+	const longTtlMs =
+		retention === "long" && supportsLongCacheRetention(model)
+			? compatCacheTtlMs(model, "promptCacheLongTtl")
+			: undefined;
+	const baseTtlMs = compatCacheTtlMs(model, "promptCacheTtl") ?? GENERIC_CACHE_TTL_MS;
+	// `promptCacheBreakpointTtl` advertises a *minimum* lifetime, so it raises a
+	// shorter window but never truncates a longer one.
+	const minimumTtlMs = getPromptCacheMinimumTtlMs(model) ?? 0;
+	return cacheTouchedAtMs + Math.max(longTtlMs ?? baseTtlMs, minimumTtlMs);
 }
 
 function supportsAnthropicCacheRefresh<TApi extends Api>(model: Model<TApi>): boolean {

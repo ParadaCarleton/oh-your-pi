@@ -1,6 +1,10 @@
 // Provider-wire compat for "anthropic"; regenerated from the frozen census using deployment contract selectors.
 
 provider "anthropic" {
+	// Anthropic's reusable prefix lives 5m, or 1h when the caller asks for
+	// long retention (`cache_control.ttl: "1h"`).
+	prompt-cache-ttl "5m"
+	prompt-cache-long-ttl "1h"
 	class "anthropic" {
 		revision ">=3.7 <4.6" {
 			thinking-efforts "minimal" "low" "medium" "high" "xhigh"

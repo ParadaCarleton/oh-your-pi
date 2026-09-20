@@ -4,8 +4,8 @@
 
 ### Added
 
-- Added `omp gc --sessions [archive|delete]`, one pass that repairs session files. It reunites conversations split across files — the same session written to two project directories, where each copy can hold branches the other lost, and `/fork`, which writes a whole new file so work done in the fork never appears in the tree it branched from — then prunes whole conversations nobody answered or nobody asked. Duplicates are unioned by entry id with the copy matching the recorded `cwd` staying authoritative, forks are grafted where they diverged, and empty per-cwd session directories go with them. The mode defaults to archiving; deletion has to be asked for, and nothing is written without `--apply`.
-- Session-rewriting gc passes ask the OS whether a session is live — advisory locks, open file handles, POSIX locks — and name the holding process when they skip one, rather than inferring liveness from the file's modification time.
+- Added `omp gc --sessions [archive|delete]`, one pass that repairs session files. It reunites conversations split across files — the same session written to two project directories, where each copy can hold branches the other lost, and `/fork`, which writes a whole new file so work done in the fork never appears in the tree it branched from — then prunes whole conversations nobody answered or nobody asked. Duplicates are unioned by entry id with the copy matching the recorded `cwd` staying authoritative, forks are grafted where they diverged, and empty per-cwd session directories go with them. The mode defaults to archiving; deletion has to be asked for, and nothing is written without `--apply` ([#12630](https://github.com/can1357/oh-my-pi/pull/12630) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
+- Session-rewriting gc passes ask the OS whether a session is live — advisory locks, open file handles, POSIX locks — and name the holding process when they skip one, rather than inferring liveness from the file's modification time ([#12630](https://github.com/can1357/oh-my-pi/pull/12630) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 
 ### Changed
 

@@ -14,7 +14,7 @@
 
 ### Fixed
 
-- Fixed a session opened in two windows silently persisting nothing after the other window rewrote the file; the conflicting writer now merges the other window's entries and republishes.
+- Fixed a session opened in two windows silently persisting nothing after the other window rewrote the file; the conflicting writer now merges the other window's entries and republishes ([#12624](https://github.com/can1357/oh-my-pi/pull/12624) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 - Fixed contradictory `systemPromptTemplate` and `customSystemPrompt` options being accepted with a fixed full `systemPrompt` replacement, including empty values ([#12194](https://github.com/can1357/oh-my-pi/pull/12194) by [@anatoli-tsinovoy](https://github.com/anatoli-tsinovoy)).
 - Added `Target.getTargets` to the browser relay's CDP surface so clients can enumerate eligible pages without attaching to or claiming them.
 - Added image, web, speech, dictation, judge, and memory model roles with ordered fallbacks, automatic migration of legacy backend settings, and `omp models --kind` filtering.

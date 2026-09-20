@@ -45,7 +45,7 @@ describe("getPromptCacheExpiryMs", () => {
 		);
 	});
 
-	it("uses the advertised 30-minute minimum lifetime for current GPT caches", () => {
+	it("raises a short cache to the advertised 30-minute minimum without truncating long retention", () => {
 		const model = buildModel({
 			id: "gpt-5.6-sol",
 			name: "GPT 5.6 Sol",
@@ -62,8 +62,10 @@ describe("getPromptCacheExpiryMs", () => {
 		expect(getPromptCacheExpiryMs({ model, cacheTouchedAtMs: TOUCHED_AT_MS, cacheRetention: "short" })).toBe(
 			TOUCHED_AT_MS + THIRTY_MINUTES_MS,
 		);
+		// The advertised 30m is a *minimum*, so opting into 24h retention must not
+		// be clamped down to it.
 		expect(getPromptCacheExpiryMs({ model, cacheTouchedAtMs: TOUCHED_AT_MS, cacheRetention: "long" })).toBe(
-			TOUCHED_AT_MS + THIRTY_MINUTES_MS,
+			TOUCHED_AT_MS + ONE_DAY_MS,
 		);
 	});
 

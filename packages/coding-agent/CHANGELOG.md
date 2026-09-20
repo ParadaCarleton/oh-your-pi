@@ -36,6 +36,7 @@
 - Fixed Edit previews and application panicking on Unicode no-op edits and overlapping duplicate matches.
 - Fixed live subagent messages getting stuck behind persisted-agent discovery, and roster discovery looping on dot-named transcripts.
 - Fixed llama.cpp discovery of PrismML Bonsai 2 27B GGUFs: built-in and custom-named providers now share catalog rules for chat-completions routing and the Qwen 3.8 thinking ladder (`low`/`medium`/`xhigh`), including cached models.
+- Fixed background job results being lost or delivered twice when overlapping foreground waits watched the same job ([#10436](https://github.com/can1357/oh-my-pi/pull/10436)).
 
 ## [18.2.6] - 2026-09-18
 
@@ -845,7 +846,6 @@
 - Fixed frame skips while streaming long markdown Write previews ([#10955](https://github.com/can1357/oh-my-pi/issues/10955)).
 - LiteLLM discovery no longer caches an empty catalog after a timed-out run: a rich-metadata timeout now falls back to `/v1/models`, and a discovery failure with no prior catalog leaves the cache untouched so the next launch retries immediately instead of hiding discovery-only models ([#10964](https://github.com/can1357/oh-my-pi/issues/10964)).
 - Searching `free` in the model picker now finds every zero-cost model, not just the ones with `free` in their id.
-- Fixed background job results being lost or delivered twice when overlapping foreground waits watched the same job ([#10436](https://github.com/can1357/oh-my-pi/pull/10436)).
 
 ## [18.1.11] - 2026-09-05
 

@@ -1245,15 +1245,16 @@ describe("archiveBranch", () => {
 		expect(treeIds(session.getTree())).toContain(idOtherAsst);
 	});
 
-	it("restores every nested archive covering a descendant", async () => {
+	it("collapses an inner archive into the outer one so restoring the outer reveals both", async () => {
 		const { session, idOther, idOtherAsst } = buildTwoAnsweredBranches();
 		await session.archiveBranch(idOtherAsst);
 		await session.archiveBranch(idOther);
 
-		expect(session.getArchivedRootIds()).toEqual([idOtherAsst, idOther]);
+		expect(session.getArchivedRootIds()).toEqual([idOther]);
 		expect(session.getArchivedRootId(idOtherAsst)).toBe(idOther);
-		expect(await session.restoreArchived(idOtherAsst)).toBe(2);
+		expect(await session.restoreArchived(idOther)).toBe(1);
 		expect(session.getArchivedRootIds()).toEqual([]);
+		expect(treeIds(session.getTree())).toContain(idOther);
 		expect(treeIds(session.getTree())).toContain(idOtherAsst);
 	});
 

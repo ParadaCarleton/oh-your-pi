@@ -2878,12 +2878,22 @@ export class SessionManager {
 		let entries = 0;
 		const stack = [targetId];
 		const seen = new Set<string>();
+		const archivedRoots = this.#index.archivedRootIds();
+		const covered: string[] = [];
 		while (stack.length > 0) {
 			const id = stack.pop() as string;
 			if (seen.has(id)) continue;
 			seen.add(id);
 			entries++;
+			if (id !== targetId && archivedRoots.has(id)) covered.push(id);
 			for (const child of this.#index.childrenOf(id)) stack.push(child.id);
+		}
+
+		// A root covering an inner one owns the whole subtree, so restoring it
+		// reveals every entry under it.
+		for (const id of covered) {
+			const reveal: ArchiveEntry = { type: "archive", ...this.#freshEntryFields(), targetId: id, archived: false };
+			this.#recordEntry(reveal);
 		}
 
 		const entry: ArchiveEntry = { type: "archive", ...this.#freshEntryFields(), targetId, archived: true };

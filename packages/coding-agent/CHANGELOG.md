@@ -2,21 +2,15 @@
 
 ## [Unreleased]
 
-## [18.3.2] - 2026-09-25
-
-### Added
-
-- Added `tui.titleSpinner` (`braille` | `dots` | `line`, default `braille`) to pick the terminal-title working-state spinner glyphs alongside the existing `tui.titleState` on/off toggle.
-- Customize the system prompt with Handlebars using live settings and tool data via `SYSTEM_TEMPLATE.md`, `--system-prompt-template`, or the SDK ([#12194](https://github.com/can1357/oh-my-pi/pull/12194) by [@anatoli-tsinovoy](https://github.com/anatoli-tsinovoy)).
-
 ### Fixed
 
 - Fixed a session opened in two windows silently persisting nothing after the other window rewrote the file; the conflicting writer now merges the other window's entries and republishes ([#12624](https://github.com/can1357/oh-my-pi/pull/12624) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 - A session that genuinely cannot reach disk now stops accepting input behind a red banner until you restart, instead of printing one warning and running on unsaved ([#12624](https://github.com/can1357/oh-my-pi/pull/12624) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
-- Fixed contradictory `systemPromptTemplate` and `customSystemPrompt` options being accepted with a fixed full `systemPrompt` replacement, including empty values ([#12194](https://github.com/can1357/oh-my-pi/pull/12194) by [@anatoli-tsinovoy](https://github.com/anatoli-tsinovoy)).
-- Added `Target.getTargets` to the browser relay's CDP surface so clients can enumerate eligible pages without attaching to or claiming them.
-- Added image, web, speech, dictation, judge, and memory model roles with ordered fallbacks, automatic migration of legacy backend settings, and `omp models --kind` filtering.
-- Added native OpenRouter image generation and model-selected web-plugin search, plus live TypeSafe judge-model discovery.
+
+## [18.3.2] - 2026-09-25
+
+### Added
+
 - Added `ctx.agent` to the extension context, reporting whether the session is the top-level agent or a subagent, plus its registry id, agent definition name, task depth and parent id, so handlers rebound to subagent sessions can tell which agent they serve ([#13314](https://github.com/can1357/oh-my-pi/pull/13314) by [@andrebrait](https://github.com/andrebrait))
 - Added tracking of Anthropic's usage-limit wrap-up allowance for Claude subscription accounts: after the 5-hour or weekly limit is reached, the status line and `/slow status` show `limit reached · wrapping up · resets HH:MM`, and the agent is told to wrap up when neither low priority nor extra usage will continue the work ([#13340](https://github.com/can1357/oh-my-pi/pull/13340) by [@H4vC](https://github.com/H4vC))
 

@@ -869,12 +869,13 @@ export class SessionManager {
 
 	/**
 	 * A rejected publish means another process advanced the file. The entries
-	 * it added are readable, so the transcript is reconciled and republished
-	 * instead of latching persistence dead for the rest of the session.
+	 * it added are readable, so the transcript is reconciled and republished.
+	 * Once reconcile attempts are spent the conflict is a real persistence
+	 * failure: it latches and notifies observers like any other.
 	 */
 	#noteDiskFailure(errorLike: unknown): Error {
 		const error = toError(errorLike);
-		if (error instanceof SessionWriteConflictError) {
+		if (error instanceof SessionWriteConflictError && this.#reconcileAttempts < MAX_RECONCILE_ATTEMPTS) {
 			this.#fileIsCurrent = false;
 			this.#rewriteRequired = true;
 			logger.warn("Session file advanced by another process; reconciling.", {
@@ -923,8 +924,8 @@ export class SessionManager {
 		let adopted = 0;
 		for (const entry of entries) {
 			if (entry.type === "session" || this.#index.has(entry.id)) continue;
-			this.#entries.push(entry as SessionEntry);
-			this.#index.insert(entry as SessionEntry);
+			this.#entries.push(entry);
+			this.#index.insert(entry);
 			adopted++;
 		}
 		this.#index.setLeaf(leaf);

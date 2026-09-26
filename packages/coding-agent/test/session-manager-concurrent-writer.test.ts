@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, setSystemTime, spyOn, vi } from "bun:test";
 import * as fs from "node:fs";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { FileSessionStorage } from "@oh-my-pi/pi-coding-agent/session/session-storage";
+import { FileSessionStorage, SessionWriteConflictError } from "@oh-my-pi/pi-coding-agent/session/session-storage";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 /**
@@ -81,5 +81,25 @@ describe("SessionManager with a concurrent writer on the same file", () => {
 		manager.appendMessage({ role: "user", content: "later unsaved turn", timestamp: Date.now() });
 		await manager.flush().catch(() => undefined);
 		expect(warnings.length).toBeGreaterThan(1);
+	});
+
+	it("reports the session unsaved once reconciling keeps losing", async () => {
+		const manager = SessionManager.create(sessionDir, sessionDir, storage);
+		await manager.ensureOnDisk();
+		const warnings: string[] = [];
+		manager.onPersistenceError(error => warnings.push(error.message));
+		const sessionFile = manager.getSessionFile() ?? "";
+		// Every publish loses the race: another writer always got there first.
+		spyOn(storage, "writeTextAtomic").mockImplementation(() =>
+			Promise.reject(new SessionWriteConflictError(sessionFile, 1, 2)),
+		);
+
+		for (let turn = 0; turn < 10 && warnings.length === 0; turn++) {
+			manager.appendMessage({ role: "user", content: `turn ${turn}`, timestamp: Date.now() });
+			await manager.rewriteEntries().catch(() => undefined);
+			await manager.flush().catch(() => undefined);
+		}
+
+		expect(warnings.length).toBeGreaterThan(0);
 	});
 });

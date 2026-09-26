@@ -81,26 +81,7 @@ describe("vibe wait completion classification", () => {
 		expect(outcome.settled).toEqual([
 			{ id: WORKER, jobId: turn.jobId, status: "completed", resultText: "worker result" },
 		]);
-	});
-
-	it("does not auto-deliver a result returned during an overlapping Hub wait", async () => {
-		const deliveries: Array<{ jobId: string; text: string }> = [];
-		const turn = startTurn({ onDelivery: (jobId, text) => deliveries.push({ jobId, text }) });
-		const pending = VibeSessionRegistry.global().wait(session, { timeoutMs: 1_000 });
-		manager.watchJobs([turn.jobId]);
-		turn.complete("worker result");
-
-		const outcome = await pending;
-		manager.acknowledgeDeliveries([turn.jobId]);
-		manager.unwatchJobs([turn.jobId]);
-		manager.resumeDeliveries([turn.jobId]);
-		await manager.drainDeliveries({ timeoutMs: 1_000 });
-
-		expect(outcome.settled).toEqual([
-			{ id: WORKER, jobId: turn.jobId, status: "completed", resultText: "worker result" },
-		]);
 		expect(manager.isJobResultConsumed(turn.jobId)).toBe(true);
-		expect(deliveries).toEqual([]);
 	});
 
 	it("does not render an abort as an elapsed wait window, even with a long timeout", async () => {
@@ -145,5 +126,24 @@ describe("vibe wait completion classification", () => {
 
 		expect(outcome.timedOut).toBe(false);
 		expect(outcome.settled[0]).toMatchObject({ id: WORKER, jobId: turn.jobId, status: "cancelled" });
+	});
+
+	it("does not auto-deliver a result returned during an overlapping wait", async () => {
+		const deliveries: Array<{ jobId: string; text: string }> = [];
+		const turn = startTurn({ onDelivery: (jobId, text) => deliveries.push({ jobId, text }) });
+		const pending = VibeSessionRegistry.global().wait(session, { timeoutMs: 1_000 });
+		manager.watchJobs([turn.jobId]);
+		turn.complete("worker result");
+
+		const outcome = await pending;
+		manager.acknowledgeDeliveries([turn.jobId]);
+		manager.unwatchJobs([turn.jobId]);
+		await manager.drainDeliveries({ timeoutMs: 1_000 });
+
+		expect(outcome.settled).toEqual([
+			{ id: WORKER, jobId: turn.jobId, status: "completed", resultText: "worker result" },
+		]);
+		expect(manager.isJobResultConsumed(turn.jobId)).toBe(true);
+		expect(deliveries).toEqual([]);
 	});
 });

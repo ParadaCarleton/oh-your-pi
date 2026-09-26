@@ -8,7 +8,7 @@ import type { FileEntry, SessionEntry, SessionHeader } from "@oh-my-pi/pi-coding
 import { loadEntriesFromFile } from "@oh-my-pi/pi-coding-agent/session/session-loader";
 import { computeDefaultSessionDir } from "@oh-my-pi/pi-coding-agent/session/session-paths";
 import { FileSessionStorage } from "@oh-my-pi/pi-coding-agent/session/session-storage";
-import { shortenPath } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
+import { shortenPath } from "@oh-my-pi/pi-tui/render/render-utils";
 import { getSessionsDir } from "@oh-my-pi/pi-utils";
 import { holdFileOpen } from "../helpers/open-file-holder";
 

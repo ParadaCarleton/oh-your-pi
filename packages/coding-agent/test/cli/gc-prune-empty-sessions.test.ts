@@ -6,7 +6,7 @@ import { runGcCommand } from "@oh-my-pi/pi-coding-agent/cli/gc-cli";
 import type { SessionHeader } from "@oh-my-pi/pi-coding-agent/session/session-entries";
 import * as sessionLiveness from "@oh-my-pi/pi-coding-agent/session/session-liveness";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { shortenPath } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
+import { shortenPath } from "@oh-my-pi/pi-tui/render/render-utils";
 import { getSessionsDir } from "@oh-my-pi/pi-utils";
 import { holdFileOpen } from "../helpers/open-file-holder";
 import { assistantMsg, userMsg } from "../utilities";

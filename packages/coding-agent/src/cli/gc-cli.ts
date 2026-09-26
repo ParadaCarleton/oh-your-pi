@@ -30,7 +30,8 @@ import { listSessionsReadOnly, type SessionInfo, type SessionStatus } from "../s
 import type { LivenessHolder, LivenessSignal, SessionLiveness } from "../session/session-liveness";
 import * as sessionLiveness from "../session/session-liveness";
 import { loadEntriesFromFile } from "../session/session-loader";
-import { planSessionMerge, type SessionMergeConflict, type SessionMergePlan } from "../session/session-merge";
+import { copySessionArtifacts } from "../session/session-manager";
+import { planSessionMerge, type SessionMergeConflict } from "../session/session-merge";
 import { resolveManagedSessionRoot } from "../session/session-paths";
 import { FileSessionStorage } from "../session/session-storage";
 import { parseTitleSlotFromContent, serializeTitleSlot, titleUpdateFromSlot } from "../session/session-title-slot";
@@ -253,7 +254,6 @@ interface ForkLineageFile {
 
 interface ForkLineagePair {
 	parent: ForkLineageFile;
-	plan: SessionMergePlan;
 	fork: ForkLineageFile;
 	sharedEntries: number;
 	forkOnlyEntries: number;
@@ -1102,7 +1102,6 @@ async function collectForkLineageGroups(
 			pairs.push({
 				parent: { path: parentLineage.path, id: parentLineage.header.id, entries: parentEntries },
 				fork: { path: forkLineage.path, id: forkLineage.header.id, entries: forkEntries },
-				plan,
 				sharedEntries: sourceEntries.filter(entry => destinationIds.has(entry.id)).length,
 				forkOnlyEntries: plan.addedEntries,
 				attachmentPoints: attachmentParents.size,
@@ -1127,6 +1126,14 @@ function serializeMergedSession(originalContent: string, entries: FileEntry[]): 
 	}
 	const body = `${physicalEntries.map(entry => JSON.stringify(entry)).join("\n")}\n`;
 	return titleUpdate ? `${serializeTitleSlot(titleUpdate)}${body}` : body;
+}
+
+/** Recursively merge `source`'s artifacts into `destination`'s, keeping files the destination already has. */
+function mergeSessionArtifacts(source: string, destination: string): Promise<void> {
+	return copySessionArtifacts(
+		`${sessionArtifactsPath(source)}${SESSION_SUFFIX}`,
+		`${sessionArtifactsPath(destination)}${SESSION_SUFFIX}`,
+	);
 }
 
 async function moveDuplicateSourceToArchive(source: string, sessionsRoot: string, archiveRoot: string): Promise<void> {
@@ -2049,6 +2056,7 @@ async function mergeDuplicatePhase(
 
 		for (const source of group.sources) {
 			try {
+				await mergeSessionArtifacts(source.path, group.destination.path);
 				await moveDuplicateSourceToArchive(source.path, sessionsRoot, archiveRoot);
 				result.archivedSources += 1;
 			} catch (error) {
@@ -2067,11 +2075,6 @@ async function mergeForkPhase(
 	const pairs = await collectForkLineageGroups(sessionsRoot, result);
 	result.forkPairs = pairs.length;
 	result.wouldMerge += pairs.length;
-	result.addedEntries += pairs.reduce((sum, pair) => sum + pair.plan.addedEntries, 0);
-	result.skippedEntries += pairs.reduce((sum, pair) => sum + pair.plan.skippedEntries, 0);
-	result.conflicts.push(
-		...pairs.flatMap(pair => pair.plan.conflicts.map(conflict => ({ sessionId: pair.parent.id, ...conflict }))),
-	);
 	result.candidates.push(
 		...pairs.map(pair => ({
 			kind: "fork" as const,
@@ -2083,37 +2086,52 @@ async function mergeForkPhase(
 			attachmentPoints: pair.attachmentPoints,
 		})),
 	);
-	if (!options.apply) return;
 
 	const storage = new FileSessionStorage();
-	for (const pair of pairs) {
-		let parentContent: string;
-		try {
-			parentContent = await Bun.file(pair.parent.path).text();
-			const backupTimestamp = new Date().toISOString().replaceAll(":", "-");
-			await Bun.write(`${pair.parent.path}.${backupTimestamp}.bak`, parentContent);
-			await storage.writeTextAtomic(pair.parent.path, serializeMergedSession(parentContent, pair.plan.merged));
-		} catch (error) {
-			result.errors.push(`${pair.parent.path}: ${errorMessage(error)}`);
-			continue;
-		}
-
-		try {
-			// A successfully consumed fork is archived, never unlinked: its session and
-			// artifacts remain recoverable while no longer cluttering the active list.
-			await moveDuplicateSourceToArchive(pair.fork.path, sessionsRoot, archiveRoot);
-			result.archivedSources += 1;
-			result.merged += 1;
-		} catch (error) {
-			try {
-				await storage.writeTextAtomic(pair.parent.path, parentContent);
-			} catch (rollbackError) {
-				result.errors.push(
-					`${pair.fork.path}: ${errorMessage(error)}; parent rollback failed: ${errorMessage(rollbackError)}`,
-				);
+	for (const siblings of Map.groupBy(pairs, pair => pair.parent.path).values()) {
+		// Sibling forks share one parent: each is planned against the parent as the
+		// previous graft left it, so a later fork's write keeps the earlier ones.
+		let parentEntries = siblings[0]!.parent.entries;
+		for (const pair of siblings) {
+			const plan = planSessionMerge(parentEntries, pair.fork.entries);
+			result.addedEntries += plan.addedEntries;
+			result.skippedEntries += plan.skippedEntries;
+			result.conflicts.push(...plan.conflicts.map(conflict => ({ sessionId: pair.parent.id, ...conflict })));
+			if (!options.apply) {
+				parentEntries = plan.merged;
 				continue;
 			}
-			result.errors.push(`${pair.fork.path}: ${errorMessage(error)}`);
+
+			let parentContent: string;
+			try {
+				parentContent = await Bun.file(pair.parent.path).text();
+				const backupTimestamp = new Date().toISOString().replaceAll(":", "-");
+				await Bun.write(`${pair.parent.path}.${backupTimestamp}.bak`, parentContent);
+				await storage.writeTextAtomic(pair.parent.path, serializeMergedSession(parentContent, plan.merged));
+			} catch (error) {
+				result.errors.push(`${pair.parent.path}: ${errorMessage(error)}`);
+				continue;
+			}
+
+			try {
+				await mergeSessionArtifacts(pair.fork.path, pair.parent.path);
+				// A successfully consumed fork is archived, never unlinked: its session and
+				// artifacts remain recoverable while no longer cluttering the active list.
+				await moveDuplicateSourceToArchive(pair.fork.path, sessionsRoot, archiveRoot);
+				result.archivedSources += 1;
+				result.merged += 1;
+				parentEntries = plan.merged;
+			} catch (error) {
+				try {
+					await storage.writeTextAtomic(pair.parent.path, parentContent);
+				} catch (rollbackError) {
+					result.errors.push(
+						`${pair.fork.path}: ${errorMessage(error)}; parent rollback failed: ${errorMessage(rollbackError)}`,
+					);
+					continue;
+				}
+				result.errors.push(`${pair.fork.path}: ${errorMessage(error)}`);
+			}
 		}
 	}
 }
@@ -2156,7 +2174,7 @@ async function runEmptySessionGc(
 				});
 				continue;
 			}
-			if (mode === "delete" && liveness.degraded.length > 0) {
+			if (mode === "delete" && options.apply && liveness.degraded.length > 0) {
 				result.skippedActive++;
 				result.skipped.push({
 					path: file,
@@ -2194,8 +2212,7 @@ async function runEmptySessionGc(
 				await moveDuplicateSourceToArchive(file, sessionsRoot, archiveRoot);
 				result.archived++;
 			} else {
-				await fs.rm(sessionArtifactsPath(file), { recursive: true, force: true });
-				await fs.unlink(file);
+				await storage.deleteSessionWithArtifacts(file);
 				result.deleted++;
 			}
 		} catch (error) {

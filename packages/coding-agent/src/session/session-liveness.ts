@@ -189,8 +189,8 @@ export async function inspectSessionLiveness(
 	if (process.platform === "linux" || options.procRoot !== undefined) {
 		await Promise.all([inspectLinuxHandles(resolved, procRoot, state), inspectPosixLocks(stat, procRoot, state)]);
 	} else {
+		// A POSIX lock needs an open descriptor, so lsof's open-handle check covers it.
 		await inspectWithLsof(resolved, state);
-		degrade(state, "posix-lock check unavailable: /proc/locks is Linux-only");
 	}
 	const signals = SIGNAL_ORDER.filter(signal => state.signals.has(signal));
 	return {

@@ -320,6 +320,26 @@ describe("omp gc duplicate-session merge", () => {
 		expect(await Bun.file(pair.sourceArtifact).exists()).toBe(false);
 	});
 
+	test("apply merges the consumed source's artifacts into the destination without overwriting its own", async () => {
+		const agentDir = path.join(root, "agent");
+		const pair = await createDivergentPair(agentDir);
+		const destinationArtifacts = pair.destination.slice(0, -".jsonl".length);
+		const sourceArtifacts = pair.source.slice(0, -".jsonl".length);
+		await fs.mkdir(path.join(destinationArtifacts, "attachments"), { recursive: true });
+		await Bun.write(path.join(destinationArtifacts, "attachments", "shared.txt"), "destination copy");
+		await Bun.write(path.join(sourceArtifacts, "attachments", "shared.txt"), "source copy");
+
+		const result = await runGcCommand({ flags: { agentDir, mergeSessions: true, apply: true } });
+
+		expect(result.mergeSessions?.archivedSources).toBe(1);
+		expect(await Bun.file(path.join(destinationArtifacts, "attachments", "branch.txt")).text()).toBe(
+			"source branch artifact",
+		);
+		expect(await Bun.file(path.join(destinationArtifacts, "attachments", "shared.txt")).text()).toBe(
+			"destination copy",
+		);
+	});
+
 	test("leaves same-directory collisions and different session ids alone", async () => {
 		const agentDir = path.join(root, "agent");
 		const sessionsRoot = getSessionsDir(agentDir);

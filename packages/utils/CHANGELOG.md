@@ -4,7 +4,7 @@
 
 ### Added
 
-- `Flags.string({ optionalValue })` for CLI flags that mean something sensible on their own: a bare `--flag` takes the stated value, while `--flag value` and `--flag=value` still win. `node:util.parseArgs` requires a value for string options, and a plain `default:` cannot express this because it also fires when the flag is absent.
+- Added `Flags.string({ optionalValue })`: a bare `--flag` takes the stated value ([#12630](https://github.com/can1357/oh-my-pi/pull/12630) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 
 ## [18.3.1] - 2026-09-25
 

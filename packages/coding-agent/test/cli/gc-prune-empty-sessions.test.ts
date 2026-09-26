@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as nodeFs from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -147,6 +148,31 @@ describe("omp gc empty-session pruning", () => {
 		expect(stdout.split("\n")[1]).toBe("prune: deleted 1 of 1 dead session (1 unanswered)");
 	});
 
+	test("a delete whose transcript unlink fails leaves the session's artifacts intact", async () => {
+		const agentDir = path.join(root, "agent");
+		const file = await writeSession(agentDir, "undeletable", session => {
+			session.appendMessage(userMsg("hello?"));
+		});
+		const artifact = path.join(artifactsPath(file), "attachments", "question.txt");
+		await fs.mkdir(path.dirname(artifact), { recursive: true });
+		await Bun.write(artifact, "question artifact");
+		const unlink = nodeFs.promises.unlink;
+		const failUnlink = spyOn(nodeFs.promises, "unlink").mockImplementation(async target => {
+			if (target === file) throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+			return unlink(target);
+		});
+		try {
+			const result = await runGcCommand({ flags: { agentDir, pruneEmptySessions: "delete", apply: true } });
+
+			expect(result.pruneEmptySessions?.deleted).toBe(0);
+			expect(result.pruneEmptySessions?.errors.some(error => error.startsWith(file))).toBe(true);
+			expect(await Bun.file(file).exists()).toBe(true);
+			expect(await Bun.file(artifact).text()).toBe("question artifact");
+		} finally {
+			failUnlink.mockRestore();
+		}
+	});
+
 	test("refuses irreversible deletion when liveness checks degrade", async () => {
 		const agentDir = path.join(root, "agent");
 		const file = await writeSession(agentDir, "degraded", session => {
@@ -168,6 +194,29 @@ describe("omp gc empty-session pruning", () => {
 			expect(result.pruneEmptySessions?.candidates).toEqual([]);
 			expect(await Bun.file(file).exists()).toBe(true);
 			expect(stdout).toContain("liveness checks degraded; refusing irreversible deletion");
+		} finally {
+			inspect.mockRestore();
+		}
+	});
+
+	test("a dry-run delete still reports candidates when liveness checks degrade", async () => {
+		const agentDir = path.join(root, "agent");
+		const file = await writeSession(agentDir, "degraded-dry-run", session => {
+			session.appendMessage(userMsg("hello?"));
+		});
+		const inspect = spyOn(sessionLiveness, "inspectSessionLiveness").mockResolvedValue({
+			path: file,
+			live: false,
+			signals: [],
+			holders: [],
+			secondsSinceWrite: 3600,
+			degraded: ["open-handle check unavailable"],
+		});
+		try {
+			const result = await runGcCommand({ flags: { agentDir, pruneEmptySessions: "delete" } });
+
+			expect(result.pruneEmptySessions?.wouldPrune).toBe(1);
+			expect(result.pruneEmptySessions?.candidates.map(candidate => candidate.path)).toEqual([file]);
 		} finally {
 			inspect.mockRestore();
 		}

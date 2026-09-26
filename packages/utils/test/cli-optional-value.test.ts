@@ -77,4 +77,8 @@ describe("Flags.string({ optionalValue })", () => {
 		expect(command.parsed.mode).toBe("archive");
 		expect(command.parsed.targets).toEqual(["some/path"]);
 	});
+
+	it("rejects a whitespace-separated bogus value when the command takes no positionals", async () => {
+		await expect(runWith(PruneLikeCommand, ["--mode", "bogus"])).rejects.toThrow(/one of: archive, delete/);
+	});
 });

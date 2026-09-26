@@ -15,6 +15,7 @@ import { holdFileOpen } from "../helpers/open-file-holder";
 const PARENT_ID = "019f6d5f-4aee-7000-a3ab-3b62adc9b302";
 const FORK_ID = "01a0017c-4aee-7000-a3ab-3b62adc9b303";
 const MISSING_ID = "01dead00-4aee-7000-a3ab-3b62adc9b304";
+const SIBLING_FORK_ID = "01a0017d-4aee-7000-a3ab-3b62adc9b305";
 const OLD_DATE = new Date("2026-01-01T00:00:00.000Z");
 const TIMESTAMP = "2026-07-16T23-59-49-486Z";
 
@@ -350,6 +351,50 @@ describe("omp gc fork-session merge", () => {
 		expect(stdout).toContain(
 			`merge: folded 1/1 file into 1 session, 2 entries added (1 fork at 1 attachment point); consumed files archived to ${shortenPath(archiveRoot)}`,
 		);
+	});
+
+	test("apply folds sibling forks of one parent into it together", async () => {
+		const agentDir = path.join(root, "agent");
+		const pair = await createForkPair(agentDir);
+		const sibling = await writeSession(
+			path.dirname(pair.parent),
+			`${TIMESTAMP}_${SIBLING_FORK_ID}.jsonl`,
+			header(SIBLING_FORK_ID, path.join(root, "project"), PARENT_ID),
+			[
+				entry("shared-root", null, "shared-root"),
+				entry("attachment", "shared-root", "attachment"),
+				entry("sibling-branch", "attachment", "sibling"),
+			],
+		);
+
+		const result = await runGcCommand({ flags: { agentDir, mergeSessions: true, apply: true } });
+
+		expect(result.mergeSessions?.forkPairs).toBe(2);
+		expect(result.mergeSessions?.archivedSources).toBe(2);
+		expect(await Bun.file(pair.fork).exists()).toBe(false);
+		expect(await Bun.file(sibling).exists()).toBe(false);
+		const ids = logicalEntries(await loadEntriesFromFile(pair.parent, new FileSessionStorage())).map(
+			value => value.id,
+		);
+		expect(ids).toContain("fork-branch");
+		expect(ids).toContain("fork-descendant");
+		expect(ids).toContain("sibling-branch");
+		expect(ids).toContain("parent-branch");
+	});
+
+	test("apply merges the fork's artifacts into the parent without overwriting the parent's own", async () => {
+		const agentDir = path.join(root, "agent");
+		const pair = await createForkPair(agentDir);
+		const parentArtifacts = pair.parent.slice(0, -".jsonl".length);
+		await fs.mkdir(path.join(parentArtifacts, "attachments"), { recursive: true });
+		await Bun.write(path.join(parentArtifacts, "attachments", "shared.txt"), "parent copy");
+		await Bun.write(path.join(path.dirname(pair.forkArtifact), "shared.txt"), "fork copy");
+
+		const result = await runGcCommand({ flags: { agentDir, mergeSessions: true, apply: true } });
+
+		expect(result.mergeSessions?.archivedSources).toBe(1);
+		expect(await Bun.file(path.join(parentArtifacts, "attachments", "fork.txt")).text()).toBe("fork artifact");
+		expect(await Bun.file(path.join(parentArtifacts, "attachments", "shared.txt")).text()).toBe("parent copy");
 	});
 
 	test("a second apply finds no candidate after the fork was archived", async () => {

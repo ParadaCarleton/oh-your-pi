@@ -118,4 +118,17 @@ describe("inspectSessionLiveness", () => {
 		expect(result.degraded.some(reason => reason.includes("open-handle"))).toBe(true);
 		expect(result.degraded.some(reason => reason.includes("posix-lock"))).toBe(true);
 	});
+
+	test("off Linux, a completed lsof check is not degraded by the missing /proc/locks", async () => {
+		const file = await makeFile();
+		const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+		Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+		try {
+			const result = await inspectSessionLiveness(file);
+
+			expect(result.degraded.filter(reason => reason.includes("posix-lock"))).toEqual([]);
+		} finally {
+			Object.defineProperty(process, "platform", platform);
+		}
+	});
 });

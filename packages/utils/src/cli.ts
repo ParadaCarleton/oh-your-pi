@@ -217,11 +217,12 @@ export abstract class Command {
 			const name = token.startsWith("--") ? token.slice(2) : "";
 			const desc = flagDefs[name];
 			if (!desc?.optionalValue) return token;
-			// Only a following token that is a declared choice counts as this flag's
-			// value. Anything else — a positional, another flag, end of argv — leaves
-			// the flag bare, so a command with positionals cannot have one eaten.
+			// A following token is this flag's value when it is a declared choice, or when
+			// it is not a flag and the command has no positional to absorb it; option
+			// validation then rejects a bogus value. Otherwise the flag stays bare.
 			const next = this.argv[index + 1];
 			if (next !== undefined && desc.options?.includes(next)) return token;
+			if (next !== undefined && !next.startsWith("-") && Object.keys(argDefs).length === 0) return token;
 			return `--${name}=${desc.optionalValue}`;
 		});
 

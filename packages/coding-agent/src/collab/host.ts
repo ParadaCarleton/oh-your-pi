@@ -119,6 +119,22 @@ function isWireSessionEntry(entry: StoredSessionEntry): entry is StoredSessionEn
 }
 
 /**
+ * The nearest ancestor guests receive. Local-only entries never reach
+ * them, so a wire entry below one would dangle on the replica and cut archive
+ * traversal (and the branch) at the gap; it hangs off the first wire ancestor instead.
+ */
+function wireParentId(parentId: string | null, lookup: (id: string) => StoredSessionEntry | undefined): string | null {
+	const seen = new Set<string>();
+	while (parentId !== null && !seen.has(parentId)) {
+		const parent = lookup(parentId);
+		if (!parent || isWireSessionEntry(parent)) return parentId;
+		seen.add(parentId);
+		parentId = parent.parentId;
+	}
+	return null;
+}
+
+/**
  * Keep archived content private even when its root is local-only metadata that
  * the collaboration protocol cannot represent. A guest cannot traverse from a
  * missing root to its descendants, so omit that whole subtree and its dangling
@@ -161,7 +177,8 @@ function projectSnapshotEntries(entries: StoredSessionEntry[]): (StoredSessionEn
 			const target = byId.get(entry.targetId);
 			if (!target || !isWireSessionEntry(target) || hidden.has(entry.targetId)) continue;
 		}
-		projected.push(entry);
+		const parentId = wireParentId(entry.parentId, id => byId.get(id));
+		projected.push(parentId === entry.parentId ? entry : { ...entry, parentId });
 	}
 	return projected;
 }
@@ -498,7 +515,8 @@ export class CollabHost {
 				// Guests never received a local-only root: resync so the snapshot projection omits its subtree.
 				for (const [peerId, peer] of this.#peers) this.#sendSnapshot(peerId, peer.canWrite);
 			} else if (isWireSessionEntry(entry)) {
-				const shrunk = shrinkReplicatedEntry(entry);
+				const parentId = wireParentId(entry.parentId, id => this.#ctx.sessionManager.getEntry(id));
+				const shrunk = shrinkReplicatedEntry(parentId === entry.parentId ? entry : { ...entry, parentId });
 				if (shrunk.type === "custom_message" && shrunk.customType === COLLAB_ENTRY_OMITTED_CUSTOM_TYPE) {
 					// The live path also emits a guest-visible notice: guests only
 					// apply `message` entries to their agent context, so without

@@ -2,12 +2,15 @@
 
 ## [Unreleased]
 
-## [18.3.2] - 2026-09-25
-
 ### Added
 
 - Added `omp gc --sessions [archive|delete]`, one pass that repairs session files. It reunites conversations split across files — the same session written to two project directories, where each copy can hold branches the other lost, and `/fork`, which writes a whole new file so work done in the fork never appears in the tree it branched from — then prunes whole conversations nobody answered or nobody asked. Duplicates are unioned by entry id with the copy matching the recorded `cwd` staying authoritative, forks are grafted where they diverged, and empty per-cwd session directories go with them. The mode defaults to archiving; deletion has to be asked for, and nothing is written without `--apply` ([#12630](https://github.com/can1357/oh-my-pi/pull/12630) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 - Session-rewriting gc passes ask the OS whether a session is live — advisory locks, open file handles, POSIX locks — and name the holding process when they skip one, rather than inferring liveness from the file's modification time ([#12630](https://github.com/can1357/oh-my-pi/pull/12630) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
+
+## [18.3.2] - 2026-09-25
+
+### Added
+
 - Added `ctx.agent` to the extension context, reporting whether the session is the top-level agent or a subagent, plus its registry id, agent definition name, task depth and parent id, so handlers rebound to subagent sessions can tell which agent they serve ([#13314](https://github.com/can1357/oh-my-pi/pull/13314) by [@andrebrait](https://github.com/andrebrait))
 - Added tracking of Anthropic's usage-limit wrap-up allowance for Claude subscription accounts: after the 5-hour or weekly limit is reached, the status line and `/slow status` show `limit reached · wrapping up · resets HH:MM`, and the agent is told to wrap up when neither low priority nor extra usage will continue the work ([#13340](https://github.com/can1357/oh-my-pi/pull/13340) by [@H4vC](https://github.com/H4vC))
 

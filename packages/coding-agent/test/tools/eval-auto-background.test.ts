@@ -228,6 +228,23 @@ describe("EvalTool auto-background", () => {
 		await asyncJobManager.dispose();
 	});
 
+	it("keeps a short-timeout cell inline when it finishes before the threshold", async () => {
+		const asyncJobManager = new AsyncJobManager({});
+		const cell = mockGatedCell("done\n");
+		const tool = new EvalTool(
+			makeSession(Settings.isolated({ "eval.autoBackground.thresholdMs": 60_000 }), asyncJobManager),
+		);
+
+		const pending = tool.execute("call-short", { language: "js", code: "await work()", timeout: 1 });
+		cell.release();
+		const result = await pending;
+
+		expect(result.details?.async).toBeUndefined();
+		expect(result.details?.cells?.[0]?.status).toBe("complete");
+		expect(asyncJobManager.getAllJobs()).toEqual([]);
+		await asyncJobManager.dispose();
+	});
+
 	it("backgrounds a running cell when the steering signal fires mid-wait", async () => {
 		const asyncJobManager = new AsyncJobManager({});
 		const cell = mockGatedCell("steered\n");

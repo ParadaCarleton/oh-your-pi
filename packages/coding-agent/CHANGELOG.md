@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added accessible collapse controls to the HTML export’s session tree for folding branches with visible descendants.
+- Added accessible collapse controls to the HTML export’s session tree for folding branches with visible descendants ([#7761](https://github.com/can1357/oh-my-pi/pull/7761) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 
 ## [18.3.2] - 2026-09-25
 

@@ -687,6 +687,17 @@ describe("AgentSession shake", () => {
 			expect(result.prunedAt).toBeGreaterThan(0);
 		});
 
+		it("shakes before an expired queued user steer resumes", async () => {
+			const result = await seedConversation(60 * 60_000 + 1);
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.steer("steered after the cache expired");
+			await session.waitForIdle();
+
+			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
+			expect(result.prunedAt).toBeGreaterThan(0);
+		});
+
 		it("still shakes when a failed turn left a fresh timestamp on a cold cache", async () => {
 			const result = await seedConversation(60 * 60_000 + 1);
 			// An aborted turn never reached the provider, so it cannot have warmed

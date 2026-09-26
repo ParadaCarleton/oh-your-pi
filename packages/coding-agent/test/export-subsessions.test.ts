@@ -151,6 +151,15 @@ describe("collectSubSessions", () => {
 		expect(html).not.toContain(subPreviousPath);
 	});
 
+	test("rejects a missing input without creating session or export files", async () => {
+		const missingInput = path.join(root, "missing.jsonl");
+		const outputPath = path.join(root, "export.html");
+
+		await expect(exportFromFile(missingInput, { outputPath })).rejects.toThrow(`File not found: ${missingInput}`);
+		expect(await Bun.file(missingInput).exists()).toBe(false);
+		expect(await Bun.file(outputPath).exists()).toBe(false);
+	});
+
 	test("filters archived subagent branches unless explicitly included", async () => {
 		await Bun.write(path.join(root, "main/Alpha.jsonl"), archivedSessionJsonl("alpha"));
 

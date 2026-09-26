@@ -2,11 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentState } from "@oh-my-pi/pi-agent-core";
 import { APP_NAME, isEnoent } from "@oh-my-pi/pi-utils";
-import { getResolvedThemeColors, getThemeExportColors } from "../../modes/theme/theme";
+import { getResolvedThemeColors, getThemeExportColors } from "@oh-my-pi/pi-tui/theme";
 import type { SessionEntry, SessionHeader } from "../../session/session-entries";
 import { loadSessionFile } from "../../session/session-loader";
 import { SessionManager } from "../../session/session-manager";
-import { isTaskToolDetails } from "../../task/tool-details";
+import { isTaskToolDetails } from "@oh-my-pi/pi-tui/tools/task-details";
 import type { ExportThemeNames } from "./args";
 import templateCssPath from "./template.css" with { type: "file" };
 import templateHtmlPath from "./template.html" with { type: "file" };
@@ -371,7 +371,10 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 
 	let sm: SessionManager;
 	try {
-		sm = await SessionManager.open(inputPath, undefined, undefined, { suppressBreadcrumb: true });
+		sm = await SessionManager.open(inputPath, undefined, undefined, {
+			suppressBreadcrumb: true,
+			throwIfMissing: true,
+		});
 	} catch (err) {
 		if (isEnoent(err)) throw new Error(`File not found: ${inputPath}`);
 		throw err;

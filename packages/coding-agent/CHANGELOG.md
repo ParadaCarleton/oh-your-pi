@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Long-running Python and JavaScript eval cells now automatically background by default and deliver their results when finished ([#11185](https://github.com/can1357/oh-my-pi/pull/11185) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
+
 ## [18.3.2] - 2026-09-25
 
 ### Added
@@ -11,7 +15,6 @@
 
 ### Changed
 
-- Long-running Python and JavaScript eval cells now automatically background by default and deliver their results when finished ([#11185](https://github.com/can1357/oh-my-pi/pull/11185) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 - `providers.anthropic.slowMode` now controls only the low-priority lane; the usage-limit wrap-up allowance is tracked for every first-party Claude subscription account ([#13340](https://github.com/can1357/oh-my-pi/pull/13340) by [@H4vC](https://github.com/H4vC))
 - Enter on the `/model` hub sidebar now moves focus to the model list (like →) instead of acting on the highlighted row ([#13347](https://github.com/can1357/oh-my-pi/pull/13347) by [@H4vC](https://github.com/H4vC))
 

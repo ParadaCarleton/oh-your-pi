@@ -48,6 +48,10 @@ export function AgentDrawer(props: {
 		let cursor = 0;
 		let carry = "";
 		let acc: readonly SessionEntry[] = [];
+		// Nothing renders until one read comes back empty: a read that stopped short
+		// of EOF (the host caps each at 4 MiB) may precede the archive record hiding
+		// part of it, and hiding a branch after showing it cannot take it back.
+		let caughtUp = false;
 		let timer: Timer | null = null;
 		const stopPolling = () => {
 			if (timer !== null) {
@@ -58,10 +62,11 @@ export function AgentDrawer(props: {
 		const poll = async (): Promise<void> => {
 			if (disposed || inFlight) return;
 			inFlight = true;
+			let drain = false;
 			try {
 				const reply = await client.fetchTranscript(agent.id, cursor);
 				if (disposed) return;
-				const decision = decideTranscriptPoll(reply, carry);
+				const decision = decideTranscriptPoll(reply, carry, cursor);
 				switch (decision.action) {
 					case "retry":
 						return; // timeout/transient → keep polling from the same cursor
@@ -72,14 +77,18 @@ export function AgentDrawer(props: {
 					case "advance":
 						cursor = decision.newSize;
 						carry = decision.carry;
-						if (decision.fresh.length > 0) {
-							acc = [...acc, ...decision.fresh];
-							setEntries(visibleTranscriptEntries(acc));
+						if (decision.fresh.length > 0) acc = [...acc, ...decision.fresh];
+						if (!caughtUp && !decision.caughtUp) {
+							drain = true;
+							return;
 						}
+						if (!caughtUp || decision.fresh.length > 0) setEntries(visibleTranscriptEntries(acc));
+						caughtUp = true;
 						return;
 				}
 			} finally {
 				inFlight = false;
+				if (drain && !disposed) void poll();
 			}
 		};
 		void poll();

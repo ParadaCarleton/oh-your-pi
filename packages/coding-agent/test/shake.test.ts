@@ -634,7 +634,7 @@ describe("AgentSession shake", () => {
 				sessionManager,
 				settings: Settings.isolated({
 					"compaction.enabled": false,
-					"compaction.idleEnabled": true,
+					"compaction.shakeOnCacheExpiry": true,
 				}),
 				modelRegistry,
 			});
@@ -854,7 +854,7 @@ describe("AgentSession shake", () => {
 
 		it("shakes between tool-loop requests once a long tool call outlives the cache TTL", async () => {
 			const { model, seeded, requests } = await openToolLoopSession({
-				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.shakeOnCacheExpiry": true }),
 				// The generic cache policy is 5 minutes; a tool call that runs longer
 				// leaves the prefix cold for the request that carries its result.
 				onToolRun: () => setSystemTime(new Date(Date.now() + 6 * 60_000)),
@@ -885,7 +885,7 @@ describe("AgentSession shake", () => {
 
 		it("uses the catalog-declared prompt-cache lifetime over the per-API heuristic", async () => {
 			const { model, seeded } = await openToolLoopSession({
-				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.shakeOnCacheExpiry": true }),
 				// Declared 30-minute short tier: a 6-minute tool call (cold under the
 				// 5-minute generic heuristic) still finds the prefix warm.
 				promptCache: { short: 30 * 60 },
@@ -903,7 +903,7 @@ describe("AgentSession shake", () => {
 
 		it("shakes once a tool call outlives the catalog-declared lifetime", async () => {
 			const { seeded, requests } = await openToolLoopSession({
-				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.shakeOnCacheExpiry": true }),
 				promptCache: { short: 30 * 60 },
 				onToolRun: () => setSystemTime(new Date(Date.now() + 31 * 60_000)),
 			});
@@ -926,7 +926,7 @@ describe("AgentSession shake", () => {
 				getMode: () => "off",
 			});
 			const { model, seeded } = await openToolLoopSession({
-				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.shakeOnCacheExpiry": true }),
 				cacheWarmer,
 				onToolRun: () => {
 					// The warmer refreshed the prefix 4.5 minutes into a 6-minute tool
@@ -958,7 +958,7 @@ describe("AgentSession shake", () => {
 
 		it("leaves a tool loop alone while the cache stays warm", async () => {
 			const { model, seeded } = await openToolLoopSession({
-				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.shakeOnCacheExpiry": true }),
 				onToolRun: () => {},
 			});
 			const shakeSpy = vi.spyOn(session, "shake");
@@ -971,9 +971,9 @@ describe("AgentSession shake", () => {
 			expect(model.calls).toHaveLength(2);
 		});
 
-		it("does nothing when idle compaction is disabled", async () => {
+		it("does nothing when compaction.shakeOnCacheExpiry is off", async () => {
 			const { seeded } = await openToolLoopSession({
-				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": false }),
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.shakeOnCacheExpiry": false }),
 				onToolRun: () => setSystemTime(new Date(Date.now() + 6 * 60_000)),
 			});
 			const shakeSpy = vi.spyOn(session, "shake");
@@ -986,7 +986,10 @@ describe("AgentSession shake", () => {
 		});
 
 		it("applies to subagent sessions through the inherited settings", async () => {
-			const parentSettings = Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true });
+			const parentSettings = Settings.isolated({
+				"compaction.enabled": false,
+				"compaction.shakeOnCacheExpiry": true,
+			});
 			const { model, seeded, requests } = await openToolLoopSession({
 				settings: createSubagentSettings(parentSettings),
 				agentKind: "sub",

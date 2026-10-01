@@ -161,7 +161,8 @@
 ### Fixed
 
 - Auto-shake now runs before any provider request sent after the active model's prompt cache expires — not only user turns, but also tool-loop requests whose preceding tool call outlived the cache TTL, queued steer/follow-up resumes, and the first request after reopening a session ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
-- Subagent sessions apply the same cache-expired auto-shake through their inherited `compaction.idleEnabled` setting.
+- The cache-expired auto-shake is now gated by its own `compaction.shakeOnCacheExpiry` setting (default off) instead of `compaction.idleEnabled`, so it can be used without idle compaction; it has no token threshold and does not depend on `compaction.methodOrder`.
+- Subagent sessions apply the same cache-expired auto-shake through their inherited `compaction.shakeOnCacheExpiry` setting.
 - Aborted and errored turns no longer postpone that auto-shake, so a retry after a failed request still starts from a rewritten prefix ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 - The cache-expired auto-shake now uses catalog-declared `promptCache` tier lifetimes when the model has them, and counts a successful cache-warmer refresh as a cache touch so a warmed prefix is not shaken.
 

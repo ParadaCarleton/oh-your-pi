@@ -115,7 +115,7 @@ import {
 	cfgCompaction,
 	cfgCompactionAutoContinue,
 	cfgCompactionEnabled,
-	cfgCompactionIdleEnabled,
+	cfgCompactionShakeOnCacheExpiry,
 	cfgCompactionMethodOrder,
 	cfgContextPromotionEnabled,
 	cfgSnapcompactShape,
@@ -2084,7 +2084,7 @@ export class SessionMaintenance {
 	 * the model switches, so re-checking on every request stays O(1).
 	 */
 	#takeCacheExpiredShakeSlot(): boolean {
-		if (!cfgCompactionIdleEnabled.get(this.#host.settings)) return false;
+		if (!cfgCompactionShakeOnCacheExpiry.get(this.#host.settings)) return false;
 		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
 		const model = this.#model;
 		if (!lastAssistant || !model) return false;

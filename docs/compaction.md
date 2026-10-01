@@ -208,12 +208,14 @@ Threshold, incomplete-output, and overflow recovery advance to the next configur
 
 Rewriting history that a provider still holds in its prompt cache is expensive: the next request re-writes the whole cached prefix. Once the cache has expired, the rewrite is free — the next request pays a cold cache write either way — so that is the cheapest possible moment to shake.
 
-When `compaction.idleEnabled` is on, `SessionMaintenance.runCacheExpiredShakeBeforeProviderRequest` runs from the agent's before-model-call hook, i.e. **before every provider request**: the first request of a user prompt, every request of a continuing tool loop (a tool call that runs longer than the cache TTL cools the prefix mid-run), queued steer/follow-up resumes, and the first request after reopening a session. Subagents construct the same `AgentSession`, inherit `compaction.*` from the parent, and therefore get the same behavior.
+This is gated by its own setting, `compaction.shakeOnCacheExpiry` (default `false`). It is independent of idle compaction (`compaction.idleEnabled`, which runs on a timer, above `compaction.idleThresholdTokens`, and walks `compaction.methodOrder`) and independent of `compaction.methodOrder` itself: the cache-expired shake fires whether or not `shake` is listed there, and has no token threshold — the only trigger is the cache being calculated as cold.
+
+When `compaction.shakeOnCacheExpiry` is on, `SessionMaintenance.runCacheExpiredShakeBeforeProviderRequest` runs from the agent's before-model-call hook, i.e. **before every provider request**: the first request of a user prompt, every request of a continuing tool loop (a tool call that runs longer than the cache TTL cools the prefix mid-run), queued steer/follow-up resumes, and the first request after reopening a session. Subagents construct the same `AgentSession`, inherit `compaction.*` from the parent, and therefore get the same behavior.
 
 Per request the check is a timestamp comparison:
 
 - The cache "touched" time is the timestamp of the last assistant turn that actually reached the provider (`aborted`/`error` turns are skipped — they never warmed anything).
-- The expiry is `getPromptCacheExpiryMs` in `@oh-my-pi/pi-ai`: live Anthropic cache-refresh state when available, otherwise the model's advertised policy (`promptCacheBreakpointTtl` minimum, long-retention support, provider defaults: 5 minutes generic / Anthropic, 1 hour for Anthropic long retention and Codex, OpenAI long retention when supported). A model switch since the last turn counts as expired.
+- The expiry prefers the catalog-declared `promptCache` tier lifetime for the model (using the tier the provider reported writing when available); otherwise `getPromptCacheExpiryMs` in `@oh-my-pi/pi-ai` applies the model's advertised policy (`promptCacheBreakpointTtl` minimum, long-retention support, provider defaults: 5 minutes generic / Anthropic, 1 hour for Anthropic long retention and Codex, OpenAI long retention when supported). A successful cache-warmer refresh counts as a cache touch. A model switch since the last turn counts as expired.
 - One shake per (last provider turn, model) pair: after a cold prefix has been shaken — or found to have nothing eligible — nothing re-runs until a new provider turn lands.
 
 The shake itself uses the conservative auto config (`DEFAULT_SHAKE_CONFIG`) and emits the usual `auto_compaction_start`/`auto_compaction_end` pair with `action: "shake"` and reason `"idle"`. Messages folded into the request being prepared (the prompt itself, a queued steer, a just-produced tool result) are not yet journaled when the rewrite runs; they are re-appended behind the rebuilt context so the request still carries them. The check is skipped while another compaction or a handoff is in flight.
@@ -537,7 +539,8 @@ Defined in `packages/coding-agent/src/session/context-settings.ts`:
 - `compaction.v2RetainedMessageBudget` = `64000`
 - `compaction.thresholdPercent` = `-1` and `compaction.thresholdTokens` = `-1`; a positive fixed token limit takes precedence over percentage, and otherwise the reserve-based threshold is used.
 - `task.agentCompactionThresholdOverrides` = `{}`; exact-name task/eval agent → token count (`90000`) or percentage (`"80%"`) replacing both thresholds for that agent only. See [Settings](./settings.md#context-compaction-and-memory).
-- `compaction.idleEnabled` = `false`. When enabled, oversized context compacts while idle, and cached context is shaken once its provider cache expires, immediately before the next provider request (see [Cache-expired shake](#cache-expired-shake)).
+- `compaction.idleEnabled` = `false`. When enabled, oversized context compacts on a timer while the session is idle.
+- `compaction.shakeOnCacheExpiry` = `false`. When enabled, cached context is shaken immediately before the next provider request once the model's prompt cache is calculated to have expired. Independent of `compaction.idleEnabled`, `compaction.idleThresholdTokens`, and `compaction.methodOrder` (see [Cache-expired shake](#cache-expired-shake)).
 - `compaction.idleThresholdTokens` = `200000`
 - `compaction.idleTimeoutSeconds` = `300`
 - `compaction.supersedeReads` = `true`

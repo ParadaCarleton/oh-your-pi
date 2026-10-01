@@ -228,7 +228,21 @@ export const cfgCompactionIdleEnabled = register({
 		tab: "context",
 		group: "Compaction",
 		label: "Idle Compaction",
-		description: "Compact oversized context while idle and shake expired cached context before the next provider request",
+		description: "Compact oversized context while the session is idle",
+	},
+});
+
+// Cache-expired shake: independent of idle compaction and of `compaction.methodOrder`.
+export const cfgCompactionShakeOnCacheExpiry = register({
+	id: "compaction.shakeOnCacheExpiry",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "context",
+		group: "Compaction",
+		label: "Shake On Cache Expiry",
+		description:
+			"Shake cached context before a provider request once the model's prompt cache is calculated to have expired (no token threshold; ignores methodOrder)",
 	},
 });
 
@@ -317,6 +331,7 @@ export const cfgCompaction = combine({
 	remoteStreamingV2Enabled: cfgCompactionRemoteStreamingV2Enabled,
 	v2RetainedMessageBudget: cfgCompactionV2RetainedMessageBudget,
 	idleEnabled: cfgCompactionIdleEnabled,
+	shakeOnCacheExpiry: cfgCompactionShakeOnCacheExpiry,
 	idleThresholdTokens: cfgCompactionIdleThresholdTokens,
 	idleTimeoutSeconds: cfgCompactionIdleTimeoutSeconds,
 	supersedeReads: cfgCompactionSupersedeReads,

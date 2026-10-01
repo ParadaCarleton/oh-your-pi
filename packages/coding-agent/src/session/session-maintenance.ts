@@ -120,7 +120,7 @@ import {
 	cfgContextPromotionEnabled,
 	cfgSnapcompactShape,
 } from "./context-settings";
-import { observedPromptCacheTier, resolvePromptCacheTier } from "./cache-warmer";
+import { getPromptCacheTierTtlMs, observedPromptCacheTier, resolvePromptCacheTier } from "./cache-warmer";
 import { cfgRetry } from "./settings";
 
 export type CompactionCheckResult = Readonly<{
@@ -2066,10 +2066,8 @@ export class SessionMaintenance {
 		// Prefer the tier the provider reported writing (Anthropic `cache_creation`
 		// split); otherwise the tier the configured retention would request.
 		const tier = observedPromptCacheTier(lastAssistant.usage) ?? resolvePromptCacheTier(model, { cacheRetention });
-		const declaredSeconds = tier === undefined ? undefined : model.promptCache?.[tier];
-		if (declaredSeconds !== undefined) {
-			return cacheTouchedAtMs + declaredSeconds * 1000;
-		}
+		const declaredTtlMs = getPromptCacheTierTtlMs(model, tier);
+		if (declaredTtlMs !== undefined) return cacheTouchedAtMs + declaredTtlMs;
 
 		return getPromptCacheExpiryMs({ model, cacheTouchedAtMs, cacheRetention });
 	}

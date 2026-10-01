@@ -416,6 +416,8 @@ export interface SessionMaintenanceHost {
 	isDisposed(): boolean;
 	isStreaming(): boolean;
 	isGeneratingHandoff(): boolean;
+	/** Await message persistence already in flight (see `AgentSession.settleInFlightMessagePersistence`). */
+	settleInFlightMessagePersistence(): Promise<void>;
 	promptGeneration(): number;
 	sessionId(): string;
 	messages(): AgentMessage[];
@@ -2037,18 +2039,69 @@ export class SessionMaintenance {
 		});
 	}
 
-	/** Shake a cold reusable prefix immediately before its next user-authored turn. */
-	async runCacheExpiredPrePromptShakeIfNeeded(): Promise<void> {
-		if (!this.#host.settings.get("compaction.idleEnabled")) return;
+	/**
+	 * Whether the reusable prefix the active model would replay is calculated
+	 * to be cold right now, and has not already been shaken in that state.
+	 *
+	 * The dedupe key is the last cache-warming assistant turn plus the active
+	 * model: once a cold prefix has been shaken (or found to have nothing
+	 * eligible), nothing changes the answer until a new provider turn lands or
+	 * the model switches, so re-checking on every request stays O(1).
+	 */
+	#takeCacheExpiredShakeSlot(): boolean {
+		if (!this.#host.settings.get("compaction.idleEnabled")) return false;
 		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
 		const model = this.#model;
-		if (!lastAssistant || !model) return;
+		if (!lastAssistant || !model) return false;
 		const shakeKey = `${lastAssistant.timestamp}:${model.api}:${model.provider}:${model.id}`;
-		if (this.#lastCacheExpiryShakeKey === shakeKey) return;
+		if (this.#lastCacheExpiryShakeKey === shakeKey) return false;
 		const coldAtMs = this.promptCacheColdAtMs();
-		if (coldAtMs === undefined || Date.now() < coldAtMs) return;
+		if (coldAtMs === undefined || Date.now() < coldAtMs) return false;
 		this.#lastCacheExpiryShakeKey = shakeKey;
+		return true;
+	}
+
+	/**
+	 * Shake a cold reusable prefix immediately before the next provider
+	 * request replays it.
+	 *
+	 * Runs from the agent's before-model-call hook, so it covers every request
+	 * the session sends — the first request of a user prompt, each request of a
+	 * continuing tool loop (a tool call that outlives the provider's cache TTL
+	 * cools the prefix mid-run), queued steer/follow-up resumes, and subagent
+	 * sessions, which install the same hook. While the cache is still warm the
+	 * check is a cheap timestamp comparison and nothing is rewritten.
+	 *
+	 * `contextMessages` is the loop's live context for the request being
+	 * prepared. Messages folded in for this request (the prompt itself, queued
+	 * steers) are present there but not yet emitted to the agent state or the
+	 * session journal, so after the history rewrite they are re-appended behind
+	 * the rebuilt context rather than lost.
+	 */
+	async runCacheExpiredShakeBeforeProviderRequest(
+		contextMessages: AgentMessage[],
+		signal: AbortSignal | undefined,
+	): Promise<void> {
+		if (signal?.aborted || this.#host.isDisposed() || this.isCompacting || this.#host.isGeneratingHandoff()) {
+			return;
+		}
+		if (!this.#takeCacheExpiredShakeSlot()) return;
+		// The rewrite rebuilds the agent context from the journal, so anything
+		// still in flight to the journal must land first or it would vanish from
+		// the rebuilt context (same hazard mid-run compaction guards against).
+		await this.#host.settleInFlightMessagePersistence();
+		if (signal?.aborted || this.#host.isDisposed()) return;
+		const messagesBefore = this.#host.agent.state.messages;
 		await this.#runAutoShake("idle", false, this.#host.promptGeneration(), false, false, undefined, true);
+		if (signal?.aborted) return;
+		const rebuilt = this.#host.agent.state.messages;
+		// `replaceMessages` installs a fresh array; same reference means nothing
+		// was eligible and the loop context is still exact.
+		if (rebuilt === messagesBefore) return;
+		const knownBefore = new Set(messagesBefore);
+		const pendingTail = contextMessages.filter(message => !knownBefore.has(message));
+		contextMessages.splice(0, contextMessages.length, ...rebuilt, ...pendingTail);
+		invalidateConvertToLlmArrayCache(contextMessages);
 	}
 
 	/**

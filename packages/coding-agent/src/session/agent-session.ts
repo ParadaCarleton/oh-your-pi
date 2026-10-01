@@ -353,7 +353,7 @@ import {
 	isEmptyErrorTurn,
 	isTitleContextReply,
 	isUserInterruptAbort,
-	isUserTurnInitiator,
+	isUserInvokedSkillPrompt,
 	logProviderTurnError,
 	normalizeCustomMessagePayload,
 	type PythonExecutionMessage,
@@ -894,7 +894,7 @@ export class AgentSession implements SettingsScope {
 	#modeExitDrainSuppressionDepth = 0;
 	#usagePreflightReadyForNextModelCall = false;
 	#usagePreflightReadyModel: Model | undefined;
-	#detachCacheExpiryBeforeQueueDequeue: (() => void) | undefined;
+	#detachCacheExpiryBeforeModelCall: (() => void) | undefined;
 	#detachUsageBeforeQueueDequeue: (() => void) | undefined;
 	#detachUsageBeforeModelCall: (() => void) | undefined;
 	/** Claude account lane (`cred:<id>`/`key:<hash>`) that served the latest Anthropic request. */
@@ -1628,18 +1628,15 @@ export class AgentSession implements SettingsScope {
 			initialRetryFallback: config.initialRetryFallback,
 			deferFallbackChainValidation: this.#fallbackChainValidationDeferred,
 		});
-		this.#detachCacheExpiryBeforeQueueDequeue = this.agent.addBeforeQueuedMessageDequeueHook(
-			async (signal, queue) => {
-				const queuedMessages =
-					queue === "steering" ? this.agent.peekSteeringQueue() : this.agent.peekFollowUpQueue();
-				const hasUserTurn = queuedMessages.some(
-					message => message.role === "user" || (message.role === "custom" && isUserTurnInitiator(message)),
-				);
-				if (!hasUserTurn) return;
-				await this.#maintenance.runCacheExpiredPrePromptShakeIfNeeded();
-				signal?.throwIfAborted();
-			},
-		);
+		// Cold-cache shake runs before every provider request (first prompt
+		// request, each tool-loop request, queued steer/follow-up resumes) and in
+		// every session — subagents construct an AgentSession too, so they get
+		// the same hook. Installed ahead of the usage preflight so the preflight
+		// measures the reduced context.
+		this.#detachCacheExpiryBeforeModelCall = this.agent.addBeforeModelCallHook(async (signal, context) => {
+			await this.#maintenance.runCacheExpiredShakeBeforeProviderRequest(context.messages, signal);
+			signal?.throwIfAborted();
+		});
 		this.#detachUsageBeforeQueueDequeue = this.agent.addBeforeQueuedMessageDequeueHook(async signal => {
 			if (
 				!cfgRetryUsageAwareFallback.get(this.settings) ||
@@ -2093,6 +2090,7 @@ export class AgentSession implements SettingsScope {
 			thinkingLevel: () => this.thinkingLevel,
 			isDisposed: () => this.#isDisposed,
 			isStreaming: () => this.isStreaming,
+			settleInFlightMessagePersistence: () => this.settleInFlightMessagePersistence(),
 			isGeneratingHandoff: () => this.isGeneratingHandoff,
 			promptGeneration: () => this.#promptGeneration,
 			sessionId: () => this.sessionId,
@@ -5140,8 +5138,8 @@ export class AgentSession implements SettingsScope {
 		this.#modelDiscoveryAbortController.abort();
 		this.#queuedMessageDrainBlocked = false;
 		this.#usagePreflightReadyForNextModelCall = false;
-		this.#detachCacheExpiryBeforeQueueDequeue?.();
-		this.#detachCacheExpiryBeforeQueueDequeue = undefined;
+		this.#detachCacheExpiryBeforeModelCall?.();
+		this.#detachCacheExpiryBeforeModelCall = undefined;
 		this.#detachUsageBeforeQueueDequeue?.();
 		this.#detachUsageBeforeQueueDequeue = undefined;
 		this.#detachUsageBeforeModelCall?.();
@@ -7467,11 +7465,6 @@ export class AgentSession implements SettingsScope {
 			) {
 				await this.#maintenance.checkCompaction(lastAssistant, false, false, false);
 			}
-			const isUserTurn = message.role === "user" || (message.role === "custom" && isUserTurnInitiator(message));
-			if (isUserTurn && !options?.skipCompactionCheck) {
-				await this.#maintenance.runCacheExpiredPrePromptShakeIfNeeded();
-				if (this.#promptGeneration !== generation) return false;
-			}
 
 			await this.#prewalk.armPlanYoloIfNeeded();
 
@@ -7550,6 +7543,7 @@ export class AgentSession implements SettingsScope {
 			// (developer roles), agent-originated or autoloaded skill injections, and
 			// non-auto sessions are skipped. Never blocks the turn — failures fall
 			// back to a concrete level inside the helper.
+			const isUserTurn = message.role === "user" || (message.role === "custom" && isUserInvokedSkillPrompt(message));
 			if (this.isAutoThinking && isUserTurn) {
 				await this.#models.applyAutoThinkingLevel(expandedText, generation, options?.solutionSpace);
 				if (this.#promptGeneration !== generation) {

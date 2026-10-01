@@ -67,7 +67,7 @@ Disabling future native compaction does not disable normal replay of an existing
 
 ### Triggers
 
-Compaction/context maintenance can run in six ways:
+Compaction/context maintenance can run in seven ways:
 
 1. **Manual context compaction**: `/compact [instructions]` calls `AgentSession.compact(...)`.
 2. **Automatic overflow recovery**: after a same-model assistant error that matches context overflow.
@@ -75,6 +75,7 @@ Compaction/context maintenance can run in six ways:
 4. **Automatic threshold maintenance**: after a successful turn when context exceeds the resolved threshold.
 5. **Mid-turn threshold maintenance**: before the next provider request when a tool-loop turn crosses the threshold and `compaction.midTurnEnabled !== false`. Subagent sessions always run this check: `createSubagentSettings` pins `compaction.midTurnEnabled` on for the child because a whole assignment is one turn, so post-turn maintenance would only fire after the run already ended.
 6. **Idle maintenance**: `runIdleCompaction()` can invoke the same auto-maintenance path with reason `"idle"`.
+7. **Cache-expired shake**: before any provider request whose reusable prompt prefix is calculated to have gone cold (see [Cache-expired shake](#cache-expired-shake)).
 
 ### Compaction shape (visual)
 
@@ -202,6 +203,20 @@ store.[^experimental-context-history]
 Including `shake` in `compaction.methodOrder` performs an inline, local reduction instead of calling a summarization model. It replaces eligible tool results and large fenced/XML blocks with recoverable `artifact://` references, using a protected recent-token window and minimum-savings threshold. Automatic shake emits the normal auto-compaction events with `action: "shake"`.
 
 Threshold, incomplete-output, and overflow recovery advance to the next configured method when shake cannot reclaim enough context to get below the recovery band; this prevents repeated no-op shake loops. Idle shake does not use that fallback because the idle timer rechecks usage before running again. Manual `/shake` is a separate, more aggressive command that can target all eligible history.
+
+### Cache-expired shake
+
+Rewriting history that a provider still holds in its prompt cache is expensive: the next request re-writes the whole cached prefix. Once the cache has expired, the rewrite is free — the next request pays a cold cache write either way — so that is the cheapest possible moment to shake.
+
+When `compaction.idleEnabled` is on, `SessionMaintenance.runCacheExpiredShakeBeforeProviderRequest` runs from the agent's before-model-call hook, i.e. **before every provider request**: the first request of a user prompt, every request of a continuing tool loop (a tool call that runs longer than the cache TTL cools the prefix mid-run), queued steer/follow-up resumes, and the first request after reopening a session. Subagents construct the same `AgentSession`, inherit `compaction.*` from the parent, and therefore get the same behavior.
+
+Per request the check is a timestamp comparison:
+
+- The cache "touched" time is the timestamp of the last assistant turn that actually reached the provider (`aborted`/`error` turns are skipped — they never warmed anything).
+- The expiry is `getPromptCacheExpiryMs` in `@oh-my-pi/pi-ai`: live Anthropic cache-refresh state when available, otherwise the model's advertised policy (`promptCacheBreakpointTtl` minimum, long-retention support, provider defaults: 5 minutes generic / Anthropic, 1 hour for Anthropic long retention and Codex, OpenAI long retention when supported). A model switch since the last turn counts as expired.
+- One shake per (last provider turn, model) pair: after a cold prefix has been shaken — or found to have nothing eligible — nothing re-runs until a new provider turn lands.
+
+The shake itself uses the conservative auto config (`DEFAULT_SHAKE_CONFIG`) and emits the usual `auto_compaction_start`/`auto_compaction_end` pair with `action: "shake"` and reason `"idle"`. Messages folded into the request being prepared (the prompt itself, a queued steer, a just-produced tool result) are not yet journaled when the rewrite runs; they are re-appended behind the rebuilt context so the request still carries them. The check is skipped while another compaction or a handoff is in flight.
 
 ### Snapcompact method
 
@@ -522,7 +537,7 @@ Defined in `packages/coding-agent/src/session/context-settings.ts`:
 - `compaction.v2RetainedMessageBudget` = `64000`
 - `compaction.thresholdPercent` = `-1` and `compaction.thresholdTokens` = `-1`; a positive fixed token limit takes precedence over percentage, and otherwise the reserve-based threshold is used.
 - `task.agentCompactionThresholdOverrides` = `{}`; exact-name task/eval agent → token count (`90000`) or percentage (`"80%"`) replacing both thresholds for that agent only. See [Settings](./settings.md#context-compaction-and-memory).
-- `compaction.idleEnabled` = `false`. When enabled, oversized context compacts while idle; smaller cached context is shaken only after its provider cache expires, immediately before the next user turn. Expiry uses the active model's cache policy and persisted assistant timestamps, so it also applies to the first turn after reopening a session.
+- `compaction.idleEnabled` = `false`. When enabled, oversized context compacts while idle, and cached context is shaken once its provider cache expires, immediately before the next provider request (see [Cache-expired shake](#cache-expired-shake)).
 - `compaction.idleThresholdTokens` = `200000`
 - `compaction.idleTimeoutSeconds` = `300`
 - `compaction.supersedeReads` = `true`

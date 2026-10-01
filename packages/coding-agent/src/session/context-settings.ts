@@ -228,7 +228,7 @@ export const cfgCompactionIdleEnabled = register({
 		tab: "context",
 		group: "Compaction",
 		label: "Idle Compaction",
-		description: "Compact oversized context while idle and shake expired cached context before the next user turn",
+		description: "Compact oversized context while idle and shake expired cached context before the next provider request",
 	},
 });
 

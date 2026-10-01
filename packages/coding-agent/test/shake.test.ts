@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime, vi } from "bun:test";
 import * as path from "node:path";
 import { scheduler } from "node:timers/promises";
-import { Agent, type AgentMessage, RESCUE_SHAKE_CONFIG, Tokenizer } from "@oh-my-pi/pi-agent-core";
+import { type } from "@oh-my-pi/omptype";
+import { Agent, type AgentMessage, type AgentTool, RESCUE_SHAKE_CONFIG, Tokenizer } from "@oh-my-pi/pi-agent-core";
 import * as compactionModule from "@oh-my-pi/pi-agent-core/compaction";
 import type { AssistantMessage, ImageContent, Model, ToolResultMessage } from "@oh-my-pi/pi-ai";
 import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
@@ -13,6 +14,7 @@ import { AgentSession, type AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { formatShakeSummary } from "@oh-my-pi/pi-coding-agent/session/shake-types";
+import { createSubagentSettings } from "@oh-my-pi/pi-coding-agent/task/executor";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 import {
@@ -68,6 +70,7 @@ describe("AgentSession shake", () => {
 	});
 
 	afterEach(async () => {
+		setSystemTime();
 		if (session) await session.dispose();
 		authStorage.close();
 		try {
@@ -577,7 +580,7 @@ describe("AgentSession shake", () => {
 		});
 	});
 
-	describe("cache-expired pre-prompt shake", () => {
+	describe("cache-expired shake on user turns", () => {
 		async function seedConversation(ageMs: number, selectedModel?: Model): Promise<ToolResultMessage> {
 			const model = selectedModel ?? getBundledModel("openai-codex", "gpt-5.6-sol");
 			if (!model) throw new Error("Expected test model to exist");
@@ -735,6 +738,191 @@ describe("AgentSession shake", () => {
 
 			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
 			expect(result.prunedAt).toBeGreaterThan(0);
+		});
+	});
+
+	describe("cache-expired shake before every provider request", () => {
+		/**
+		 * Seed an older heavy bash result that sits outside the auto-shake protect
+		 * window, with a fresh timestamp so the cache reads warm at the first
+		 * request of the next prompt.
+		 */
+		function seedWarmHeavyHistory(model: Model): ToolResultMessage {
+			authStorage.setRuntimeApiKey(model.provider, "test-key");
+			apiInfo = { api: model.api, provider: model.provider, model: model.id };
+			const toolCallId = "call_warm_history";
+			const now = Date.now();
+			sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "inspect the large output" }],
+				timestamp: now - 3,
+			});
+			sessionManager.appendMessage({
+				role: "assistant",
+				content: [{ type: "toolCall", id: toolCallId, name: "bash", arguments: { command: "build" } }],
+				...apiInfo,
+				stopReason: "toolUse",
+				usage,
+				timestamp: now - 2,
+			});
+			const result: ToolResultMessage = {
+				role: "toolResult",
+				toolCallId,
+				toolName: "bash",
+				content: [{ type: "text", text: "warm output ".repeat(12_000) }],
+				isError: false,
+				timestamp: now - 1,
+			};
+			sessionManager.appendMessage(result);
+			sessionManager.appendMessage({
+				role: "assistant",
+				content: [{ type: "text", text: `finished\n${"tail ".repeat(20_000)}` }],
+				...apiInfo,
+				stopReason: "stop",
+				usage,
+				timestamp: now,
+			});
+			return result;
+		}
+
+		/**
+		 * Replace the default session with one whose mock model answers the
+		 * prompt with a `bash` tool call, then a final text turn. `onToolRun`
+		 * executes inside the tool call, between the two provider requests.
+		 */
+		async function openToolLoopSession(options: {
+			onToolRun: () => void;
+			settings: Settings;
+			agentKind?: "main" | "sub";
+		}): Promise<{ model: ReturnType<typeof createMockModel>; seeded: ToolResultMessage; requests: string[] }> {
+			const model = createMockModel({
+				responses: [
+					{ content: [{ type: "toolCall", id: "call_loop", name: "bash", arguments: { command: "sleep" } }] },
+					{ content: ["Done"] },
+				],
+			});
+			const seeded = seedWarmHeavyHistory(model);
+			await sessionManager.rewriteEntries();
+			const sessionFile = sessionManager.getSessionFile();
+			if (!sessionFile) throw new Error("Expected a persisted session");
+			await session.dispose();
+			sessionManager = await SessionManager.open(sessionFile, tempDir.path());
+			const bashTool: AgentTool = {
+				name: "bash",
+				label: "Bash",
+				description: "Mock bash tool",
+				parameters: type({}),
+				execute: async () => {
+					options.onToolRun();
+					return { content: [{ type: "text" as const, text: "fresh tool output" }] };
+				},
+			};
+			// Snapshot each request's wire context at call time: shake mutates the
+			// journaled messages in place, so a live reference would show the
+			// post-shake text for the first request too.
+			const requests: string[] = [];
+			const agent = new Agent({
+				initialState: { model, systemPrompt: ["Test"], tools: [bashTool], messages: [] },
+				streamFn: (streamModel, context, options) => {
+					requests.push(JSON.stringify(context.messages));
+					return model.stream(streamModel, context, options);
+				},
+			});
+			session = new AgentSession({
+				agent,
+				sessionManager,
+				settings: options.settings,
+				modelRegistry,
+				agentKind: options.agentKind,
+			});
+			session.subscribe(event => events.push(event));
+			session.agent.replaceMessages(session.buildDisplaySessionContext().messages);
+			return { model, seeded, requests };
+		}
+
+		function seededBranchResult(seeded: ToolResultMessage): ToolResultMessage {
+			const match = branchToolResults().find(message => message.toolCallId === seeded.toolCallId);
+			if (!match) throw new Error("Expected the seeded tool result on the branch");
+			return match;
+		}
+
+		it("shakes between tool-loop requests once a long tool call outlives the cache TTL", async () => {
+			const { model, seeded, requests } = await openToolLoopSession({
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				// The generic cache policy is 5 minutes; a tool call that runs longer
+				// leaves the prefix cold for the request that carries its result.
+				onToolRun: () => setSystemTime(new Date(Date.now() + 6 * 60_000)),
+			});
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("run the slow build");
+			await session.waitForIdle();
+
+			expect(shakeSpy).toHaveBeenCalledTimes(1);
+			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
+			expect(seededBranchResult(seeded).prunedAt).toBeGreaterThan(0);
+			expect(model.calls).toHaveLength(2);
+			expect(requests).toHaveLength(2);
+			// First request went out against the warm prefix untouched.
+			expect(requests[0]).toContain("warm output");
+			// Second request replays the shaken prefix AND still carries the tool
+			// result that was pending (not yet journaled) when the rewrite ran.
+			expect(requests[1]).not.toContain("warm output");
+			expect(requests[1]).toContain("shaken");
+			expect(requests[1]).toContain("fresh tool output");
+			expect(requests[1]).toContain("run the slow build");
+			// The loop finished on the rebuilt context without stranding anything.
+			const last = session.messages.at(-1);
+			expect(last?.role).toBe("assistant");
+			expect(JSON.stringify(last?.content)).toContain("Done");
+		});
+
+		it("leaves a tool loop alone while the cache stays warm", async () => {
+			const { model, seeded } = await openToolLoopSession({
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				onToolRun: () => {},
+			});
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("run the fast build");
+			await session.waitForIdle();
+
+			expect(shakeSpy).not.toHaveBeenCalled();
+			expect(seededBranchResult(seeded).prunedAt).toBeUndefined();
+			expect(model.calls).toHaveLength(2);
+		});
+
+		it("does nothing when idle compaction is disabled", async () => {
+			const { seeded } = await openToolLoopSession({
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": false }),
+				onToolRun: () => setSystemTime(new Date(Date.now() + 6 * 60_000)),
+			});
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("run the slow build");
+			await session.waitForIdle();
+
+			expect(shakeSpy).not.toHaveBeenCalled();
+			expect(seededBranchResult(seeded).prunedAt).toBeUndefined();
+		});
+
+		it("applies to subagent sessions through the inherited settings", async () => {
+			const parentSettings = Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true });
+			const { model, seeded, requests } = await openToolLoopSession({
+				settings: createSubagentSettings(parentSettings),
+				agentKind: "sub",
+				onToolRun: () => setSystemTime(new Date(Date.now() + 6 * 60_000)),
+			});
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("subagent task");
+			await session.waitForIdle();
+
+			expect(shakeSpy).toHaveBeenCalledTimes(1);
+			expect(seededBranchResult(seeded).prunedAt).toBeGreaterThan(0);
+			expect(model.calls).toHaveLength(2);
+			expect(requests[1]).toContain("shaken");
+			expect(requests[1]).toContain("fresh tool output");
 		});
 	});
 

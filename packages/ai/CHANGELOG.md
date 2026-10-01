@@ -39,6 +39,13 @@
 - Fixed rejected HTTP 400 requests from consuming unbounded disk space by automatically cleaning up old request logs and enforcing a size limit.
 - Fixed unnecessary credential and session updates that could trigger needless authentication reloads in other running processes.
 - Fixed context-overflow recovery for Strata requests that exceed the model context limit but return no usage information.
+### Added
+
+- Added provider-aware prompt-cache expiry reporting for cache-cold session maintenance.
+
+### Fixed
+
+- Prompt-cache expiry no longer cuts 24-hour OpenAI retention down to the advertised 30-minute minimum, so a long-retention prefix stays warm for its full window ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 
 ## [18.4.6] - 2026-10-01
 
@@ -423,13 +430,6 @@
 - GitHub Copilot plan/model-policy 403s no longer count as credential failures for credential-lifetime decisions: the token is valid, so stored credentials are preserved instead of wiped ([#11280](https://github.com/can1357/oh-my-pi/pull/11280) by [@H4vC](https://github.com/H4vC)).
 - Fixed custom `google-generative-ai` providers failing mid-turn model fallback when Gemini 3 tool calls are replayed without their original thought signature ([#11270](https://github.com/can1357/oh-my-pi/issues/11270)).
 - Fixed Linux `zcode://` (Z.AI coding-plan) OAuth sign-in hanging at the paste prompt after a successful browser authorization: native scheme registration now runs `update-desktop-database`, so `xdg-desktop-portal-gtk` resolves the handler on the first attempt instead of reporting "No Apps available" and no longer routes the callback to a stale transaction directory ([#11279](https://github.com/can1357/oh-my-pi/issues/11279)).
-### Added
-
-- Added provider-aware prompt-cache expiry reporting for cache-cold session maintenance.
-
-### Fixed
-
-- Prompt-cache expiry no longer cuts 24-hour OpenAI retention down to the advertised 30-minute minimum, so a long-retention prefix stays warm for its full window ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 
 ## [18.1.14] - 2026-09-07
 

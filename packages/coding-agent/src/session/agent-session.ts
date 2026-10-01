@@ -1575,7 +1575,12 @@ export class AgentSession implements SettingsScope {
 		this.#cacheWarmer = config.cacheWarmer;
 		if (config.cacheWarmer) {
 			const warmer = config.cacheWarmer;
-			warmer.onWarmed = (message, extensionOverride) => this.#recordCacheWarmUsage(message, extensionOverride);
+			warmer.onWarmed = (message, extensionOverride) => {
+				this.#recordCacheWarmUsage(message, extensionOverride);
+				// A successful warm re-armed the provider TTL; the cache-expired shake
+				// must not treat the still-warm prefix as cold.
+				this.#maintenance.noteCacheWarmed(message);
+			};
 			warmer.onRefreshStart = refresh => void this.#emitSessionEvent({ type: "cache_warming_start", ...refresh });
 			warmer.onRefreshEnd = refresh => void this.#emitSessionEvent({ type: "cache_warming_end", ...refresh });
 			this.subscribeRunState(state => {

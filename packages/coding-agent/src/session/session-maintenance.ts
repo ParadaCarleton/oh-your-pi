@@ -115,10 +115,12 @@ import {
 	cfgCompaction,
 	cfgCompactionAutoContinue,
 	cfgCompactionEnabled,
+	cfgCompactionIdleEnabled,
 	cfgCompactionMethodOrder,
 	cfgContextPromotionEnabled,
 	cfgSnapcompactShape,
 } from "./context-settings";
+import { observedPromptCacheTier, resolvePromptCacheTier } from "./cache-warmer";
 import { cfgRetry } from "./settings";
 
 export type CompactionCheckResult = Readonly<{
@@ -2016,9 +2018,25 @@ export class SessionMaintenance {
 	}
 
 	/**
-	 * Epoch at which the active model's reusable prompt cache goes cold. Live
-	 * provider state wins while this process remains open; otherwise the last
-	 * durable assistant timestamp makes the decision survive session resume.
+	 * Latest successful cache-warmer refresh. A warm replays the same prefix
+	 * the last real turn wrote, so it re-arms the provider's TTL without
+	 * producing a new assistant message in the session.
+	 */
+	#lastCacheWarmTouch: { api: string; provider: string; model: string; atMs: number } | undefined;
+
+	/** Record that the cache warmer refreshed the active prefix (see `CacheWarmer.onWarmed`). */
+	noteCacheWarmed(message: AssistantMessage): void {
+		if (message.stopReason === "aborted" || message.stopReason === "error") return;
+		const atMs = Number.isFinite(message.timestamp) ? message.timestamp : Date.now();
+		this.#lastCacheWarmTouch = { api: message.api, provider: message.provider, model: message.model, atMs };
+	}
+
+	/**
+	 * Epoch at which the active model's reusable prompt cache goes cold. The
+	 * last durable assistant timestamp (or a newer cache-warmer refresh of the
+	 * same prefix) is the cache touch, so the decision survives session resume.
+	 * Catalog-declared `promptCache` tier lifetimes win; providers without one
+	 * fall back to the per-API heuristics in `getPromptCacheExpiryMs`.
 	 */
 	promptCacheColdAtMs(): number | undefined {
 		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
@@ -2032,11 +2050,28 @@ export class SessionMaintenance {
 			return lastAssistant.timestamp;
 		}
 
-		return getPromptCacheExpiryMs({
-			model,
-			cacheTouchedAtMs: lastAssistant.timestamp,
-			cacheRetention: resolveConfiguredCacheRetention(this.#host.settings),
-		});
+		let cacheTouchedAtMs = lastAssistant.timestamp;
+		const warm = this.#lastCacheWarmTouch;
+		if (
+			warm &&
+			warm.atMs > cacheTouchedAtMs &&
+			warm.api === model.api &&
+			warm.provider === model.provider &&
+			warm.model === model.id
+		) {
+			cacheTouchedAtMs = warm.atMs;
+		}
+
+		const cacheRetention = resolveConfiguredCacheRetention(this.#host.settings);
+		// Prefer the tier the provider reported writing (Anthropic `cache_creation`
+		// split); otherwise the tier the configured retention would request.
+		const tier = observedPromptCacheTier(lastAssistant.usage) ?? resolvePromptCacheTier(model, { cacheRetention });
+		const declaredSeconds = tier === undefined ? undefined : model.promptCache?.[tier];
+		if (declaredSeconds !== undefined) {
+			return cacheTouchedAtMs + declaredSeconds * 1000;
+		}
+
+		return getPromptCacheExpiryMs({ model, cacheTouchedAtMs, cacheRetention });
 	}
 
 	/**
@@ -2049,7 +2084,7 @@ export class SessionMaintenance {
 	 * the model switches, so re-checking on every request stays O(1).
 	 */
 	#takeCacheExpiredShakeSlot(): boolean {
-		if (!this.#host.settings.get("compaction.idleEnabled")) return false;
+		if (!cfgCompactionIdleEnabled.get(this.#host.settings)) return false;
 		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
 		const model = this.#model;
 		if (!lastAssistant || !model) return false;

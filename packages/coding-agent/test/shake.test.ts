@@ -14,6 +14,7 @@ import { AgentSession, type AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { formatShakeSummary } from "@oh-my-pi/pi-coding-agent/session/shake-types";
+import { CacheWarmer } from "@oh-my-pi/pi-coding-agent/session/cache-warmer";
 import { createSubagentSettings } from "@oh-my-pi/pi-coding-agent/task/executor";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
@@ -584,7 +585,7 @@ describe("AgentSession shake", () => {
 		async function seedConversation(ageMs: number, selectedModel?: Model): Promise<ToolResultMessage> {
 			const model = selectedModel ?? getBundledModel("openai-codex", "gpt-5.6-sol");
 			if (!model) throw new Error("Expected test model to exist");
-			authStorage.setRuntimeApiKey(model.provider, "test-key");
+			authStorage.keys.setRuntime(model.provider, "test-key");
 			apiInfo = { api: model.api, provider: model.provider, model: model.id };
 
 			const completedAt = Date.now() - ageMs;
@@ -748,7 +749,7 @@ describe("AgentSession shake", () => {
 		 * request of the next prompt.
 		 */
 		function seedWarmHeavyHistory(model: Model): ToolResultMessage {
-			authStorage.setRuntimeApiKey(model.provider, "test-key");
+			authStorage.keys.setRuntime(model.provider, "test-key");
 			apiInfo = { api: model.api, provider: model.provider, model: model.id };
 			const toolCallId = "call_warm_history";
 			const now = Date.now();
@@ -794,6 +795,9 @@ describe("AgentSession shake", () => {
 			onToolRun: () => void;
 			settings: Settings;
 			agentKind?: "main" | "sub";
+			/** Catalog-declared prompt-cache lifetimes (seconds per tier) for the mock model. */
+			promptCache?: Model["promptCache"];
+			cacheWarmer?: CacheWarmer;
 		}): Promise<{ model: ReturnType<typeof createMockModel>; seeded: ToolResultMessage; requests: string[] }> {
 			const model = createMockModel({
 				responses: [
@@ -801,6 +805,7 @@ describe("AgentSession shake", () => {
 					{ content: ["Done"] },
 				],
 			});
+			if (options.promptCache) model.promptCache = options.promptCache;
 			const seeded = seedWarmHeavyHistory(model);
 			await sessionManager.rewriteEntries();
 			const sessionFile = sessionManager.getSessionFile();
@@ -834,6 +839,7 @@ describe("AgentSession shake", () => {
 				settings: options.settings,
 				modelRegistry,
 				agentKind: options.agentKind,
+				cacheWarmer: options.cacheWarmer,
 			});
 			session.subscribe(event => events.push(event));
 			session.agent.replaceMessages(session.buildDisplaySessionContext().messages);
@@ -875,6 +881,79 @@ describe("AgentSession shake", () => {
 			const last = session.messages.at(-1);
 			expect(last?.role).toBe("assistant");
 			expect(JSON.stringify(last?.content)).toContain("Done");
+		});
+
+		it("uses the catalog-declared prompt-cache lifetime over the per-API heuristic", async () => {
+			const { model, seeded } = await openToolLoopSession({
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				// Declared 30-minute short tier: a 6-minute tool call (cold under the
+				// 5-minute generic heuristic) still finds the prefix warm.
+				promptCache: { short: 30 * 60 },
+				onToolRun: () => setSystemTime(new Date(Date.now() + 6 * 60_000)),
+			});
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("run the slow build");
+			await session.waitForIdle();
+
+			expect(shakeSpy).not.toHaveBeenCalled();
+			expect(seededBranchResult(seeded).prunedAt).toBeUndefined();
+			expect(model.calls).toHaveLength(2);
+		});
+
+		it("shakes once a tool call outlives the catalog-declared lifetime", async () => {
+			const { seeded, requests } = await openToolLoopSession({
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				promptCache: { short: 30 * 60 },
+				onToolRun: () => setSystemTime(new Date(Date.now() + 31 * 60_000)),
+			});
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("run the slow build");
+			await session.waitForIdle();
+
+			expect(shakeSpy).toHaveBeenCalledTimes(1);
+			expect(seededBranchResult(seeded).prunedAt).toBeGreaterThan(0);
+			expect(requests[1]).not.toContain("warm output");
+		});
+
+		it("treats a successful cache-warmer refresh as a cache touch", async () => {
+			const cacheWarmer = new CacheWarmer({
+				stream: () => {
+					throw new Error("not used");
+				},
+				getPromptTokens: () => 0,
+				getMode: () => "off",
+			});
+			const { model, seeded } = await openToolLoopSession({
+				settings: Settings.isolated({ "compaction.enabled": false, "compaction.idleEnabled": true }),
+				cacheWarmer,
+				onToolRun: () => {
+					// The warmer refreshed the prefix 4.5 minutes into a 6-minute tool
+					// call: the entry is only 1.5 minutes old when the next request goes out.
+					setSystemTime(new Date(Date.now() + 4.5 * 60_000));
+					cacheWarmer.onWarmed?.(
+						{
+							role: "assistant",
+							content: [],
+							...apiInfo,
+							stopReason: "stop",
+							usage,
+							timestamp: Date.now(),
+						} as AssistantMessage,
+						false,
+					);
+					setSystemTime(new Date(Date.now() + 1.5 * 60_000));
+				},
+			});
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("run the slow build");
+			await session.waitForIdle();
+
+			expect(shakeSpy).not.toHaveBeenCalled();
+			expect(seededBranchResult(seeded).prunedAt).toBeUndefined();
+			expect(model.calls).toHaveLength(2);
 		});
 
 		it("leaves a tool loop alone while the cache stays warm", async () => {

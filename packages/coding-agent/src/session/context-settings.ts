@@ -236,7 +236,7 @@ export const cfgCompactionIdleEnabled = register({
 export const cfgCompactionShakeOnCacheExpiry = register({
 	id: "compaction.shakeOnCacheExpiry",
 	type: "boolean",
-	default: false,
+	default: true,
 	ui: {
 		tab: "context",
 		group: "Compaction",

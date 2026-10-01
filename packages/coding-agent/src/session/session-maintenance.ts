@@ -548,7 +548,14 @@ export class SessionMaintenance {
 	 */
 	#failedNativeSpeculation: string | undefined;
 	#skipPostTurnMaintenanceAssistantTimestamp: number | undefined;
+	/** Dedupe key of the last cache-expired shake: `${lastProviderTurnTimestamp}:${api}:${provider}:${model}`. */
 	#lastCacheExpiryShakeKey: string | undefined;
+	/**
+	 * Latest successful cache-warmer refresh. A warm replays the same prefix
+	 * the last real turn wrote, so it re-arms the provider's TTL without
+	 * producing a new assistant message in the session.
+	 */
+	#lastCacheWarmTouch: { api: string; provider: string; model: string; atMs: number } | undefined;
 	/**
 	 * Consecutive no-progress `response.incomplete` (length-stop) recoveries in
 	 * the current continuation loop. Bounded by {@link INCOMPLETE_RECOVERY_MAX_RETRIES};
@@ -2017,13 +2024,6 @@ export class SessionMaintenance {
 		return undefined;
 	}
 
-	/**
-	 * Latest successful cache-warmer refresh. A warm replays the same prefix
-	 * the last real turn wrote, so it re-arms the provider's TTL without
-	 * producing a new assistant message in the session.
-	 */
-	#lastCacheWarmTouch: { api: string; provider: string; model: string; atMs: number } | undefined;
-
 	/** Record that the cache warmer refreshed the active prefix (see `CacheWarmer.onWarmed`). */
 	noteCacheWarmed(message: AssistantMessage): void {
 		if (message.stopReason === "aborted" || message.stopReason === "error") return;
@@ -2038,7 +2038,7 @@ export class SessionMaintenance {
 	 * Catalog-declared `promptCache` tier lifetimes win; providers without one
 	 * fall back to the per-API heuristics in `getPromptCacheExpiryMs`.
 	 */
-	promptCacheColdAtMs(): number | undefined {
+	#promptCacheColdAtMs(): number | undefined {
 		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
 		const model = this.#model;
 		if (!lastAssistant || !model || !Number.isFinite(lastAssistant.timestamp)) return undefined;
@@ -2090,7 +2090,7 @@ export class SessionMaintenance {
 		if (!lastAssistant || !model) return false;
 		const shakeKey = `${lastAssistant.timestamp}:${model.api}:${model.provider}:${model.id}`;
 		if (this.#lastCacheExpiryShakeKey === shakeKey) return false;
-		const coldAtMs = this.promptCacheColdAtMs();
+		const coldAtMs = this.#promptCacheColdAtMs();
 		if (coldAtMs === undefined || Date.now() < coldAtMs) return false;
 		this.#lastCacheExpiryShakeKey = shakeKey;
 		return true;

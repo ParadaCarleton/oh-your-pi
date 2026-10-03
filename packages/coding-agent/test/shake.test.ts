@@ -5,7 +5,7 @@ import { type } from "@oh-my-pi/omptype";
 import { Agent, type AgentMessage, type AgentTool, RESCUE_SHAKE_CONFIG, Tokenizer } from "@oh-my-pi/pi-agent-core";
 import * as compactionModule from "@oh-my-pi/pi-agent-core/compaction";
 import type { AssistantMessage, ImageContent, Model, ToolResultMessage } from "@oh-my-pi/pi-ai";
-import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
+import { createMockModel, type MockModel } from "@oh-my-pi/pi-ai/providers/mock";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -582,10 +582,15 @@ describe("AgentSession shake", () => {
 	});
 
 	describe("cache-expired shake on user turns", () => {
-		async function seedConversation(ageMs: number, selectedModel?: Model): Promise<ToolResultMessage> {
-			const model = selectedModel ?? getBundledModel("openai-codex", "gpt-5.6-sol");
+		async function seedConversation(
+			ageMs: number,
+			selectedModel?: Model,
+			apiKey = "test-key",
+		): Promise<ToolResultMessage> {
+			// Catalog declares `prompt-cache { short 300; long 3600 }` for first-party Anthropic.
+			const model = selectedModel ?? getBundledModel("anthropic", "claude-sonnet-5");
 			if (!model) throw new Error("Expected test model to exist");
-			authStorage.keys.setRuntime(model.provider, "test-key");
+			authStorage.keys.setRuntime(model.provider, apiKey);
 			apiInfo = { api: model.api, provider: model.provider, model: model.id };
 
 			const completedAt = Date.now() - ageMs;
@@ -647,8 +652,8 @@ describe("AgentSession shake", () => {
 			return resumedResult;
 		}
 
-		it("preserves a warm ChatGPT prefix when the user returns after five minutes", async () => {
-			const result = await seedConversation(5 * 60_000);
+		it("preserves a warm Claude prefix when the user returns inside the declared lifetime", async () => {
+			const result = await seedConversation(4 * 60_000);
 			const shakeSpy = vi.spyOn(session, "shake");
 
 			await session.prompt("continue");
@@ -657,8 +662,8 @@ describe("AgentSession shake", () => {
 			expect(result.prunedAt).toBeUndefined();
 		});
 
-		it("shakes an expired ChatGPT prefix before the first resumed user turn", async () => {
-			const result = await seedConversation(60 * 60_000 + 1);
+		it("shakes an expired Claude prefix before the first resumed user turn", async () => {
+			const result = await seedConversation(5 * 60_000 + 1);
 			const shakeSpy = vi.spyOn(session, "shake");
 
 			await session.prompt("continue after reopening");
@@ -669,11 +674,35 @@ describe("AgentSession shake", () => {
 			expect(text).toContain("shaken");
 		});
 
-		it("shakes an expired prefix for a model without a provider-specific cache policy", async () => {
-			const result = await seedConversation(5 * 60_000 + 1, createMockModel());
+		it("never shakes a model without a catalog-declared prompt-cache lifetime", async () => {
+			// Unknown lifetime is not an expired one: providers opt in through the
+			// KDL `prompt-cache` axis, never through a generic fallback.
+			const result = await seedConversation(24 * 60 * 60_000, createMockModel());
 			const shakeSpy = vi.spyOn(session, "shake");
 
-			await session.prompt("continue on a generic model");
+			await session.prompt("continue on a model with no declared lifetime");
+
+			expect(shakeSpy).not.toHaveBeenCalled();
+			expect(result.prunedAt).toBeUndefined();
+		});
+
+		it("uses the one-hour tier for an Anthropic OAuth seat when the turn reported no tier", async () => {
+			// OAuth subscriber seats write 1h entries by default (cache-warmer /
+			// request-builder semantics); 30 minutes later the prefix is still warm.
+			const result = await seedConversation(30 * 60_000, undefined, "sk-ant-oat01-test");
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("continue on a subscription seat");
+
+			expect(shakeSpy).not.toHaveBeenCalled();
+			expect(result.prunedAt).toBeUndefined();
+		});
+
+		it("uses the five-minute tier for an Anthropic API key when the turn reported no tier", async () => {
+			const result = await seedConversation(30 * 60_000, undefined, "sk-ant-api03-test");
+			const shakeSpy = vi.spyOn(session, "shake");
+
+			await session.prompt("continue on a pay-per-token key");
 
 			expect(shakeSpy).toHaveBeenCalledWith("elide", expect.objectContaining({ config: expect.anything() }));
 			expect(result.prunedAt).toBeGreaterThan(0);
@@ -798,14 +827,17 @@ describe("AgentSession shake", () => {
 			/** Catalog-declared prompt-cache lifetimes (seconds per tier) for the mock model. */
 			promptCache?: Model["promptCache"];
 			cacheWarmer?: CacheWarmer;
-		}): Promise<{ model: ReturnType<typeof createMockModel>; seeded: ToolResultMessage; requests: string[] }> {
+		}): Promise<{ model: MockModel; seeded: ToolResultMessage; requests: string[] }> {
 			const model = createMockModel({
 				responses: [
 					{ content: [{ type: "toolCall", id: "call_loop", name: "bash", arguments: { command: "sleep" } }] },
 					{ content: ["Done"] },
 				],
 			});
-			if (options.promptCache) model.promptCache = options.promptCache;
+			// Generic mock models declare nothing; this path is opt-in via the
+			// catalog, so give the mock the common 5-minute tier unless a test
+			// supplies its own lifetimes.
+			model.promptCache = options.promptCache ?? { short: 300 };
 			const seeded = seedWarmHeavyHistory(model);
 			await sessionManager.rewriteEntries();
 			const sessionFile = sessionManager.getSessionFile();
@@ -855,7 +887,7 @@ describe("AgentSession shake", () => {
 		it("shakes between tool-loop requests once a long tool call outlives the cache TTL", async () => {
 			const { model, seeded, requests } = await openToolLoopSession({
 				settings: Settings.isolated({ "compaction.enabled": false, "compaction.shakeOnCacheExpiry": true }),
-				// The generic cache policy is 5 minutes; a tool call that runs longer
+				// The declared lifetime is 5 minutes; a tool call that runs longer
 				// leaves the prefix cold for the request that carries its result.
 				onToolRun: () => setSystemTime(new Date(Date.now() + 6 * 60_000)),
 			});
@@ -883,11 +915,11 @@ describe("AgentSession shake", () => {
 			expect(JSON.stringify(last?.content)).toContain("Done");
 		});
 
-		it("uses the catalog-declared prompt-cache lifetime over the per-API heuristic", async () => {
+		it("uses the catalog-declared prompt-cache lifetime of the model", async () => {
 			const { model, seeded } = await openToolLoopSession({
 				settings: Settings.isolated({ "compaction.enabled": false, "compaction.shakeOnCacheExpiry": true }),
-				// Declared 30-minute short tier: a 6-minute tool call (cold under the
-				// 5-minute generic heuristic) still finds the prefix warm.
+				// Declared 30-minute short tier: a 6-minute tool call still finds the
+				// prefix warm.
 				promptCache: { short: 30 * 60 },
 				onToolRun: () => setSystemTime(new Date(Date.now() + 6 * 60_000)),
 			});

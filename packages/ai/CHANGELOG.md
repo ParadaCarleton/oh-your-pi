@@ -39,13 +39,6 @@
 - Fixed rejected HTTP 400 requests from consuming unbounded disk space by automatically cleaning up old request logs and enforcing a size limit.
 - Fixed unnecessary credential and session updates that could trigger needless authentication reloads in other running processes.
 - Fixed context-overflow recovery for Strata requests that exceed the model context limit but return no usage information.
-### Added
-
-- Added provider-aware prompt-cache expiry reporting for cache-cold session maintenance.
-
-### Fixed
-
-- Prompt-cache expiry no longer cuts 24-hour OpenAI retention down to the advertised 30-minute minimum, so a long-retention prefix stays warm for its full window ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
 
 ## [18.4.6] - 2026-10-01
 

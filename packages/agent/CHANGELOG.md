@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `Agent.addBeforeModelCallHook` hooks now receive the live agent context as a second argument, so a host can rewrite the outgoing messages (e.g. a context reducer) before the provider request is built ([#13965](https://github.com/can1357/oh-my-pi/pull/13965) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
+
 ## [18.4.11] - 2026-10-02
 
 ### Fixed
@@ -14,9 +18,6 @@
 
 - `streamProxy` no longer finalizes a cut-off tool-call argument buffer into an executable auto-closed preview; such a call gets the parse-error arguments, so the tool is not run and the model receives the parse error ([#13868](https://github.com/can1357/oh-my-pi/pull/13868) by [@alphastorm](https://github.com/alphastorm))
 - OpenAI remote compaction no longer sends stored native tool calls whose names are blank, longer than 128 characters, or contain whitespace or control characters. The outputs that answer those calls are dropped as well ([#13985](https://github.com/can1357/oh-my-pi/pull/13985) by [@Xytronix](https://github.com/Xytronix)).
-### Changed
-
-- `Agent.addBeforeModelCallHook` hooks now receive the live agent context as a second argument, so a host can rewrite history immediately before a provider request and have the rewritten context go out on the wire.
 
 ## [18.4.6] - 2026-10-01
 

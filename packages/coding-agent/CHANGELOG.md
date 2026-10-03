@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Cache-expired auto-shake: before a provider request whose reusable prompt prefix is calculated to have outlived the model's catalog-declared prompt-cache lifetime (`prompt-cache` KDL axis / `model.promptCache`), the session shakes eligible history first, so the rewrite lands when the next request pays a cold cache write anyway. Runs before every request (first prompt request, tool-loop requests, queued steer/follow-up resumes, first request after resume) and in subagent sessions; gated by the new `compaction.shakeOnCacheExpiry` setting (default on), independent of `compaction.idleEnabled`, `compaction.idleThresholdTokens`, and `compaction.methodOrder`. Models without a declared lifetime are never shaken by this path ([#13965](https://github.com/can1357/oh-my-pi/pull/13965) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
+
 ## [18.5.0] - 2026-10-03
 
 ### Breaking Changes
@@ -158,13 +162,6 @@
 - Reduced unnecessary disk writes and improved persistence efficiency across sessions, model data, configuration, and background jobs.
 - Fixed the native composer showing the main session's effort level instead of the selected subagent's level.
 - Fixed the `omp predict` comparison view and MCP authorization prompt rendering with their full native interfaces, including clickable link actions.
-### Fixed
-
-- Auto-shake now runs before any provider request sent after the active model's prompt cache expires — not only user turns, but also tool-loop requests whose preceding tool call outlived the cache TTL, queued steer/follow-up resumes, and the first request after reopening a session ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
-- The cache-expired auto-shake is now gated by its own `compaction.shakeOnCacheExpiry` setting (default on) instead of `compaction.idleEnabled`, so it can be toggled independently of idle compaction; it has no token threshold and does not depend on `compaction.methodOrder`.
-- Subagent sessions apply the same cache-expired auto-shake through their inherited `compaction.shakeOnCacheExpiry` setting.
-- Aborted and errored turns no longer postpone that auto-shake, so a retry after a failed request still starts from a rewritten prefix ([#11190](https://github.com/can1357/oh-my-pi/pull/11190) by [@ParadaCarleton](https://github.com/ParadaCarleton)).
-- The cache-expired auto-shake now uses catalog-declared `promptCache` tier lifetimes when the model has them, and counts a successful cache-warmer refresh as a cache touch so a warmed prefix is not shaken.
 
 ## [18.4.6] - 2026-10-01
 

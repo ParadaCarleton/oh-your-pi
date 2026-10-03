@@ -50,14 +50,13 @@ import {
 	readToolSupersedeKey,
 } from "@oh-my-pi/pi-agent-core/compaction/pruning";
 import type { ProtectedToolMatcher } from "@oh-my-pi/pi-agent-core/compaction/tool-protection";
-import {
-	type AssistantMessage,
-	type CodexCompactionContext,
-	getPromptCacheExpiryMs,
-	type Message,
-	type Model,
-	type OpenAIResponsesHistoryPayload,
-	type ProviderSessionState,
+import type {
+	AssistantMessage,
+	CodexCompactionContext,
+	Message,
+	Model,
+	OpenAIResponsesHistoryPayload,
+	ProviderSessionState,
 } from "@oh-my-pi/pi-ai";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { preferredDialect } from "@oh-my-pi/pi-catalog/identity";
@@ -105,6 +104,7 @@ import type { CompactionEntry, SessionEntry } from "./session-entries";
 import type { SessionManager } from "./session-manager";
 import type { ShakeMode, ShakeResult } from "./shake-types";
 import { resolveConfiguredCacheRetention } from "./settings-stream-fn";
+import { isAnthropicOAuthToken } from "@oh-my-pi/pi-catalog/utils";
 import { resolveSpeculationLeadTokens, SPECULATION_LEAD_MIN_TOKENS } from "./speculation-lead";
 import experimentalContextNotesReminderPrompt from "../prompts/system/experimental-context-notes-reminder.md" with { type: "text" };
 import experimentalContextRolloverPrompt from "../prompts/system/experimental-context-rollover.md" with { type: "text" };
@@ -548,14 +548,16 @@ export class SessionMaintenance {
 	 */
 	#failedNativeSpeculation: string | undefined;
 	#skipPostTurnMaintenanceAssistantTimestamp: number | undefined;
-	/** Dedupe key of the last cache-expired shake: `${lastProviderTurnTimestamp}:${api}:${provider}:${model}`. */
+	/** Dedupe key of the last cache-expired shake: `${sessionId}:${lastProviderTurnTimestamp}:${api}:${provider}:${model}`. */
 	#lastCacheExpiryShakeKey: string | undefined;
 	/**
 	 * Latest successful cache-warmer refresh. A warm replays the same prefix
 	 * the last real turn wrote, so it re-arms the provider's TTL without
-	 * producing a new assistant message in the session.
+	 * producing a new assistant message in the session. Scoped to the session
+	 * that was warmed: `SessionMaintenance` outlives in-place session switches,
+	 * and a warm in one session says nothing about another session's prefix.
 	 */
-	#lastCacheWarmTouch: { api: string; provider: string; model: string; atMs: number } | undefined;
+	#lastCacheWarmTouch: { sessionId: string; api: string; provider: string; model: string; atMs: number } | undefined;
 	/**
 	 * Consecutive no-progress `response.incomplete` (length-stop) recoveries in
 	 * the current continuation loop. Bounded by {@link INCOMPLETE_RECOVERY_MAX_RETRIES};
@@ -2028,25 +2030,37 @@ export class SessionMaintenance {
 	noteCacheWarmed(message: AssistantMessage): void {
 		if (message.stopReason === "aborted" || message.stopReason === "error") return;
 		const atMs = Number.isFinite(message.timestamp) ? message.timestamp : Date.now();
-		this.#lastCacheWarmTouch = { api: message.api, provider: message.provider, model: message.model, atMs };
+		this.#lastCacheWarmTouch = {
+			sessionId: this.#host.sessionManager.getSessionId(),
+			api: message.api,
+			provider: message.provider,
+			model: message.model,
+			atMs,
+		};
 	}
 
 	/**
-	 * Epoch at which the active model's reusable prompt cache goes cold. The
-	 * last durable assistant timestamp (or a newer cache-warmer refresh of the
-	 * same prefix) is the cache touch, so the decision survives session resume.
-	 * Catalog-declared `promptCache` tier lifetimes win; providers without one
-	 * fall back to the per-API heuristics in `getPromptCacheExpiryMs`.
+	 * Epoch at which the active model's reusable prompt cache goes cold, or
+	 * undefined when it cannot be known.
+	 *
+	 * The cache touch is the last durable assistant timestamp — or a newer
+	 * cache-warmer refresh of the same prefix in this session — so the decision
+	 * survives session resume. The lifetime is the catalog-declared
+	 * `promptCache` tier (KDL `prompt-cache` axis) for the tier the last turn
+	 * wrote: the provider-reported tier (`usage.cttl`) when present, otherwise
+	 * the tier the configured retention would request, with Anthropic OAuth
+	 * seats defaulting to the long tier exactly as the request builder does.
+	 * A model with no declared lifetime for that tier yields undefined: an
+	 * unknown lifetime must never be mistaken for an expired one.
 	 */
-	#promptCacheColdAtMs(): number | undefined {
-		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
-		const model = this.#model;
-		if (!lastAssistant || !model || !Number.isFinite(lastAssistant.timestamp)) return undefined;
+	async #promptCacheColdAtMs(lastAssistant: AssistantMessage, model: Model): Promise<number | undefined> {
+		if (!Number.isFinite(lastAssistant.timestamp)) return undefined;
 		if (
 			lastAssistant.api !== model.api ||
 			lastAssistant.provider !== model.provider ||
 			lastAssistant.model !== model.id
 		) {
+			// The prefix the active model would replay was never written under it.
 			return lastAssistant.timestamp;
 		}
 
@@ -2055,6 +2069,7 @@ export class SessionMaintenance {
 		if (
 			warm &&
 			warm.atMs > cacheTouchedAtMs &&
+			warm.sessionId === this.#host.sessionManager.getSessionId() &&
 			warm.api === model.api &&
 			warm.provider === model.provider &&
 			warm.model === model.id
@@ -2062,33 +2077,43 @@ export class SessionMaintenance {
 			cacheTouchedAtMs = warm.atMs;
 		}
 
-		const cacheRetention = resolveConfiguredCacheRetention(this.#host.settings);
-		// Prefer the tier the provider reported writing (Anthropic `cache_creation`
-		// split); otherwise the tier the configured retention would request.
-		const tier = observedPromptCacheTier(lastAssistant.usage) ?? resolvePromptCacheTier(model, { cacheRetention });
-		const declaredTtlMs = getPromptCacheTierTtlMs(model, tier);
-		if (declaredTtlMs !== undefined) return cacheTouchedAtMs + declaredTtlMs;
+		let tier = observedPromptCacheTier(lastAssistant.usage);
+		if (tier === undefined) {
+			const cacheRetention = resolveConfiguredCacheRetention(this.#host.settings);
+			const isOAuthToken = model.api === "anthropic-messages" && (await this.#isAnthropicOAuthSession(model));
+			tier = resolvePromptCacheTier(model, { cacheRetention }, isOAuthToken);
+		}
+		const ttlMs = getPromptCacheTierTtlMs(model, tier);
+		return ttlMs === undefined ? undefined : cacheTouchedAtMs + ttlMs;
+	}
 
-		return getPromptCacheExpiryMs({ model, cacheTouchedAtMs, cacheRetention });
+	/** Same classification the cache warmer applies to the request's credential (`cache-warmer.ts`). */
+	async #isAnthropicOAuthSession(model: Model): Promise<boolean> {
+		try {
+			const apiKey = await this.#host.modelRegistry.getApiKey(model, this.#host.sessionManager.getSessionId());
+			return typeof apiKey === "string" && isAnthropicOAuthToken(apiKey);
+		} catch {
+			return false;
+		}
 	}
 
 	/**
 	 * Whether the reusable prefix the active model would replay is calculated
 	 * to be cold right now, and has not already been shaken in that state.
 	 *
-	 * The dedupe key is the last cache-warming assistant turn plus the active
-	 * model: once a cold prefix has been shaken (or found to have nothing
-	 * eligible), nothing changes the answer until a new provider turn lands or
-	 * the model switches, so re-checking on every request stays O(1).
+	 * The dedupe key is the session, the last cache-warming assistant turn and
+	 * the active model: once a cold prefix has been shaken (or found to have
+	 * nothing eligible), nothing changes the answer until a new provider turn
+	 * lands or the model switches, so re-checking on every request stays cheap.
 	 */
-	#takeCacheExpiredShakeSlot(): boolean {
+	async #takeCacheExpiredShakeSlot(): Promise<boolean> {
 		if (!cfgCompactionShakeOnCacheExpiry.get(this.#host.settings)) return false;
 		const lastAssistant = this.#lastCacheWarmingAssistantMessage();
 		const model = this.#model;
 		if (!lastAssistant || !model) return false;
-		const shakeKey = `${lastAssistant.timestamp}:${model.api}:${model.provider}:${model.id}`;
+		const shakeKey = `${this.#host.sessionManager.getSessionId()}:${lastAssistant.timestamp}:${model.api}:${model.provider}:${model.id}`;
 		if (this.#lastCacheExpiryShakeKey === shakeKey) return false;
-		const coldAtMs = this.#promptCacheColdAtMs();
+		const coldAtMs = await this.#promptCacheColdAtMs(lastAssistant, model);
 		if (coldAtMs === undefined || Date.now() < coldAtMs) return false;
 		this.#lastCacheExpiryShakeKey = shakeKey;
 		return true;
@@ -2118,14 +2143,25 @@ export class SessionMaintenance {
 		if (signal?.aborted || this.#host.isDisposed() || this.isCompacting || this.#host.isGeneratingHandoff()) {
 			return;
 		}
-		if (!this.#takeCacheExpiredShakeSlot()) return;
+		if (!(await this.#takeCacheExpiredShakeSlot())) return;
 		// The rewrite rebuilds the agent context from the journal, so anything
 		// still in flight to the journal must land first or it would vanish from
 		// the rebuilt context (same hazard mid-run compaction guards against).
 		await this.#host.settleInFlightMessagePersistence();
 		if (signal?.aborted || this.#host.isDisposed()) return;
 		const messagesBefore = this.#host.agent.state.messages;
-		await this.#runAutoShake("idle", false, this.#host.promptGeneration(), false, false, undefined, true);
+		// Mid-turn: splice history and return without awaiting UI/extension
+		// fan-out (`detachPostCommit`), the same contract as mid-run compaction.
+		await this.#runAutoShake(
+			"idle",
+			/* willRetry */ false,
+			this.#host.promptGeneration(),
+			/* autoContinue */ false,
+			/* terminalTextAnswer */ false,
+			/* triggerContextTokens */ undefined,
+			/* suppressContinuation */ true,
+			/* detachPostCommit */ true,
+		);
 		if (signal?.aborted) return;
 		const rebuilt = this.#host.agent.state.messages;
 		// `replaceMessages` installs a fresh array; same reference means nothing

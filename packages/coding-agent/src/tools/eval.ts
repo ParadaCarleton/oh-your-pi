@@ -647,7 +647,8 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 						(result.content.find(block => block.type === "text")?.text ?? "") +
 						formatOutputNotice(result.details?.meta);
 					latestText = finalText;
-					latestDetails = result.details;
+					const images = result.content.filter((block): block is ImageContent => block.type === "image");
+					latestDetails = { ...result.details, ...(images.length > 0 ? { images } : {}) };
 					// Hand the full result (images included) to the foreground waiter
 					// before deciding the job's terminal state.
 					completion.resolve({ kind: "completed", result });
@@ -658,7 +659,7 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 						throw new ToolError(finalText || "Eval cell failed");
 					}
 					await reportProgress(finalText, {
-						...result.details,
+						...latestDetails,
 						async: { state: "completed", jobId, type: "eval" },
 					});
 					return finalText;

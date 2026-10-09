@@ -5,6 +5,7 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { ExecutorBackendExecOptions, ExecutorBackendResult } from "@oh-my-pi/pi-coding-agent/eval";
 import * as evalIndex from "@oh-my-pi/pi-coding-agent/eval";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { buildAsyncResultBatchMessage } from "@oh-my-pi/pi-coding-agent/session/async-job-delivery";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { EvalTool } from "@oh-my-pi/pi-coding-agent/tools/eval";
 
@@ -176,6 +177,32 @@ describe("EvalTool auto-background", () => {
 		expect(deliveries[0]?.text).toContain("done");
 		// Tool-call updates stop once the cell is backgrounded.
 		expect(updates).toEqual(updatesAtBackground);
+		await asyncJobManager.dispose();
+	});
+
+	it("delivers displayed images after a cell backgrounds", async () => {
+		const asyncJobManager = new AsyncJobManager({});
+		const gate = Promise.withResolvers<void>();
+		const data = Buffer.from([0, 1, 2, 3]).toString("base64");
+		vi.spyOn(evalIndex.jsBackend, "execute").mockImplementation(async () => {
+			await gate.promise;
+			return baseResult({ displayOutputs: [{ type: "image", data, mimeType: "image/png" }] });
+		});
+		const tool = new EvalTool(
+			makeSession(
+				Settings.isolated({ "eval.autoBackground.enabled": true, "eval.autoBackground.thresholdMs": 10 }),
+				asyncJobManager,
+			),
+		);
+		const result = await tool.execute("call-image-background", { language: "js", code: "display(image)" });
+		const jobId = result.details?.async?.jobId;
+		if (!jobId) throw new Error("expected a backgrounded eval job");
+		gate.resolve();
+		await asyncJobManager.getJob(jobId)?.promise;
+		const delivery = buildAsyncResultBatchMessage([
+			{ jobId, result: "completed", job: asyncJobManager.getJob(jobId), durationMs: 1, epoch: 0 },
+		]);
+		expect(delivery?.content).toContainEqual({ type: "image", data, mimeType: "image/png" });
 		await asyncJobManager.dispose();
 	});
 

@@ -161,7 +161,6 @@ describe("discarded entry branch replication", () => {
 			const guest = SessionManager.inMemory();
 			const snapshotDone = Promise.withResolvers<void>();
 			const nextSeen = Promise.withResolvers<void>();
-			let nextId: string | undefined;
 			socket.onFrame = frame => {
 				if (frame.t === "snapshot-chunk") {
 					for (const entry of frame.entries) guest.ingestReplicatedEntry(entry);
@@ -177,7 +176,7 @@ describe("discarded entry branch replication", () => {
 
 			await manager.archiveBranch(archivedId);
 			manager.appendServiceTierChange(null);
-			nextId = manager.appendMessage({ role: "user", content: "next", timestamp: Date.now() });
+			const nextId = manager.appendMessage({ role: "user", content: "next", timestamp: Date.now() });
 			await nextSeen.promise;
 
 			const visible: string[] = [];

@@ -26,9 +26,16 @@ export default class Gc extends Command {
 			optionalValue: "archive",
 		}),
 		wal: Flags.boolean({ description: "Checkpoint history/model database WAL files" }),
+		stale: Flags.boolean({
+			description: "Prune dangling session markers/breadcrumbs and old debug reports and collab replicas",
+		}),
 		"cold-archive-after-days": Flags.integer({ description: "Minimum session age before archiving" }),
 		"retain-newest-global": Flags.integer({ description: "Always keep this many newest sessions active" }),
 		"retain-newest-per-cwd": Flags.integer({ description: "Always keep this many newest sessions per cwd active" }),
+		"stale-retain-newest": Flags.integer({
+			description: "Always keep this many newest debug reports and collab replicas",
+		}),
+		"stale-retain-days": Flags.integer({ description: "Minimum debug report/collab replica age before pruning" }),
 	};
 
 	async run(): Promise<void> {
@@ -43,9 +50,12 @@ export default class Gc extends Command {
 				mergeSessions: flags.sessions !== undefined,
 				pruneEmptySessions: parseSessionsMode(flags.sessions),
 				wal: flags.wal,
+				stale: flags.stale,
 				coldArchiveAfterDays: flags["cold-archive-after-days"],
 				retainNewestGlobal: flags["retain-newest-global"],
 				retainNewestPerCwd: flags["retain-newest-per-cwd"],
+				staleRetainNewest: flags["stale-retain-newest"],
+				staleRetainDays: flags["stale-retain-days"],
 			},
 		};
 		const result = await runGcCommand(cmd);

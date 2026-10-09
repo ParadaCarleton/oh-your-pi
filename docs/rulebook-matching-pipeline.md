@@ -28,25 +28,27 @@ It reflects the current implementation, including partial semantics and metadata
 - [`packages/coding-agent/src/cli/ttsr-cli.ts`](../packages/coding-agent/src/cli/ttsr-cli.ts)
 - [`packages/utils/src/frontmatter.ts`](../packages/utils/src/frontmatter.ts)
 
+Discovered Markdown rules use `discoverRuleFromMarkdown`; `enabled: false` frontmatter excludes the file before name-based deduplication. `buildRuleFromMarkdown` is the explicit-load variant and does not apply that discovery filter.
+
 ## 1. Canonical rule shape
 
 All providers normalize source files into `Rule`:
 
 ```ts
 interface Rule {
-  name: string;
-  path: string;
-  content: string;
-  globs?: string[];
-  alwaysApply?: boolean;
-  description?: string;
-  condition?: string[];
-  astCondition?: (string | Record<string, unknown>)[];
-  question?: string;
-  scope?: string[];
-  agents?: string[];
-  interruptMode?: "never" | "prose-only" | "tool-only" | "always";
-  _source: SourceMeta;
+	name: string;
+	path: string;
+	content: string;
+	globs?: string[];
+	alwaysApply?: boolean;
+	description?: string;
+	condition?: string[];
+	astCondition?: (string | Record<string, unknown>)[];
+	question?: string;
+	scope?: string[];
+	agents?: string[];
+	interruptMode?: "never" | "prose-only" | "tool-only" | "always";
+	_source: SourceMeta;
 }
 ```
 
@@ -84,9 +86,9 @@ Normalization:
 - frontmatter parsed via `parseFrontmatter`
 - `content` = body (frontmatter stripped)
 - `globs`, `alwaysApply`, `description`, `condition`/legacy `ttsr_trigger`, `astCondition`, `question`, `scope`, `agents`, and `interruptMode` are parsed by `buildRuleFromMarkdown`
-- top-level `RULES.md` is synthesized as rule name `RULES` and forced to `alwaysApply: true`
+- user sticky `RULES.md` is named `RULES`; project sticky `RULES.md` is named `RULES@project`; both are forced to `alwaysApply: true`
 
-Both sticky files use the fixed name `RULES`. Because native items are appended as project rules, user rules, user sticky `RULES.md`, then project sticky `RULES.md`, the first earlier item named `RULES` wins. Normally this means user sticky content shadows project sticky content; a regular `rules/RULES.md` can shadow both.
+The distinct sticky names allow user and project content to coexist. Native items are appended as project rules, user rules, user sticky `RULES.md`, then project sticky `RULES.md`; an earlier regular rule with either sticky name can still shadow that sticky file.
 
 Important caveat: `condition` values that look like file globs are converted into `tool:edit(...)` / `tool:write(...)` scope shorthands with catch-all condition `.*`.
 
@@ -258,69 +260,71 @@ After rule discovery in `createAgentSession` (`sdk.ts`), `bucketRules(...)` appl
 - Restricts a rule to matching agents. Accepts a YAML sequence, a single string, or a comma-separated string; patterns are lowercased glob patterns matched case-insensitively against the agent definition name (`scout`, `reviewer`, `foreman-*`). Whitespace around commas inside a `{a, b}` glob-brace group is tolerated and normalized away.
 - The literal `main` matches the top-level session; a subagent with no definition name falls back to `sub`. Both `main` and `sub` are reserved: a custom agent definition cannot use either name (`parseAgentFields` rejects it), so neither sentinel can be shadowed by a real agent.
 - Omitted (or an empty list) means the rule applies to every agent — the pre-existing behavior.
-- Filtering happens once, in `bucketRules(...)` at session creation, before TTSR registration: an unmatched rule joins no bucket, is never compiled into `TtsrManager`, and is not addressable via `rule://` in that session.
+- Filtering happens in `bucketRules(...)` at session creation and session-scoped prompt rebuilds, before TTSR registration: an unmatched rule joins no bucket, is never compiled into `TtsrManager`, and is not addressable via `rule://` in that session.
 - Subagents receive the parent's unfiltered discovered rule list and re-evaluate `agents` under their own name, so a scout-only rule loads in scouts and nowhere else.
 
-  ```yaml
-  agents: [scout, "foreman-*"]
-  ```
+   ```yaml
+   agents: [scout, "foreman-*"]
+   ```
 
-  ```yaml
-  # Main agent only; every subagent ignores this rule:
-  agents: main
-  ```
+   ```yaml
+   # Main agent only; every subagent ignores this rule:
+   agents: main
+   ```
 
 ### `condition`, `astCondition`, `question`, `scope`, and `interruptMode`
 
 - `condition` is the regex TTSR trigger field; legacy `ttsr_trigger` / `ttsrTrigger` are accepted as fallback inputs during parsing. A leading `(?i)`, `(?m)`, or `(?s)` inline flag group is translated to the equivalent JavaScript `RegExp` flags.
-- `astCondition` is the ast-grep trigger field: a pattern string, structured ast-grep rule object, or YAML sequence mixing both. Structured rules support ast-grep's relational and composite clauses (`inside`, `has`, `not`, `all`, `any`, and others). Use a full rule core with top-level `rule` when `constraints` or `utils` are needed; an object without `rule` is treated as the rule itself. AST conditions never trigger glob inference. They only match on edit/write tool streams, where the language is inferred from the file path. A rule may set `condition`, `astCondition`, or both.
+- `astCondition` is the ast-grep trigger field: a pattern string, structured ast-grep rule object, or YAML sequence mixing both. Structured rules support ast-grep's relational and composite clauses (`inside`, `has`, `not`, `all`, `any`, and others). Use a full rule core with top-level `rule` when `constraints` or `utils` are needed; an object without `rule` is treated as the rule itself. AST conditions never trigger glob inference. They match finalized source snapshots from tools exposing `matcherEntries` or `matcherDigest` (built-in edit/write do), with language inferred from the file path. They do not run on partial streaming deltas. A rule may set `condition`, `astCondition`, or both.
 
-  ```yaml
-  astCondition:
-    rule:
-      pattern: console.log($ARG)
-    constraints:
-      ARG:
-        regex: ^secret
-  ```
+   ```yaml
+   astCondition:
+      rule:
+         pattern: console.log($ARG)
+      constraints:
+         ARG:
+            regex: ^secret
+   ```
 
-  ```yaml
-  astCondition:
-    all:
-      - pattern: console.log($ARG)
-      - not:
-          pattern: console.log("safe")
-  ```
+   ```yaml
+   astCondition:
+      all:
+         - pattern: console.log($ARG)
+         - not:
+              pattern: console.log("safe")
+   ```
+
 - `question` makes the rule **judged**: a single natural-language yes/no question the `judge` model role answers about each completed in-scope output (reply, reasoning, or tool call). It never matches mid-stream and never interrupts; a yes delivers the rule as a warning (see `ttsr-injection-lifecycle.md` §10). When `condition`/`astCondition` are also set they only gate whether the question is asked, which keeps judge cost down. Runs per `ttsr.judge` (`auto` requires a native TypeSafe jev judge).
 
-  ```yaml
-  question: "Does the reply claim tests pass without showing they were run?"
-  scope: text
-  ```
+   ```yaml
+   question: "Does the reply claim tests pass without showing they were run?"
+   scope: text
+   ```
+
 - `scope` narrows TTSR matching to an allowlist of stream surfaces. It accepts either a comma-separated YAML string or a YAML sequence. Omitting it watches assistant prose (`text`) and all tool arguments (`tool`), but not thinking.
 
-  ```yaml
-  # Prose and thinking; equivalent forms:
-  scope: "text, thinking"
-  ```
+   ```yaml
+   # Prose and thinking; equivalent forms:
+   scope: "text, thinking"
+   ```
 
-  ```yaml
-  scope: [text, thinking]
-  ```
+   ```yaml
+   scope: [text, thinking]
+   ```
 
-  ```yaml
-  # A block-style YAML sequence is also valid:
-  scope:
-    - text
-    - thinking
-  ```
+   ```yaml
+   # A block-style YAML sequence is also valid:
+   scope:
+      - text
+      - thinking
+   ```
 
-  ```yaml
-  # Only TypeScript source snapshots produced by edit/write:
-  scope: "tool:edit(*.ts), tool:write(*.ts)"
-  ```
+   ```yaml
+   # Only TypeScript source snapshots produced by edit/write:
+   scope: "tool:edit(*.ts), tool:write(*.ts)"
+   ```
 
-  Valid tokens are `text`, `thinking`, `tool` (or `toolcall`), and `tool:<name>(<path-glob>)`. The parser tolerates the malformed fallback spelling `scope: "text","thinking"`, but portable rule files should put the comma inside one YAML string or use a YAML sequence.
+   Valid tokens are `text`, `thinking`, `tool` (or `toolcall`), and `tool:<name>(<path-glob>)`. The parser tolerates the malformed fallback spelling `scope: "text","thinking"`, but portable rule files should put the comma inside one YAML string or use a YAML sequence.
 
 - A `condition` token that looks like a file glob becomes `tool:edit(<glob>)` and `tool:write(<glob>)` scope entries plus catch-all condition `.*`; `astCondition` tokens never trigger this shorthand.
 - `interruptMode` can override the global TTSR interrupt mode for the rule.
@@ -337,15 +341,10 @@ This is advisory/contextual: prompt text asks the model to read applicable rules
 
 ## 8. `rule://` internal URL behavior
 
-`RuleProtocolHandler` resolves against the process-global active-rule snapshot
-installed once per top-level session in `sdk.ts`:
+`RuleProtocolHandler` prefers the caller's session-local rules supplied in the resolution context, falling back to the process-global active-rule snapshot. `sdk.ts` installs both snapshots at creation and refreshes them on session-scoped prompt rebuilds:
 
 ```ts
-setActiveRules([
-  ...rulebookRules,
-  ...alwaysApplyRules,
-  ...ttsrManager.getRules(),
-]);
+setActiveRules([...rulebookRules, ...alwaysApplyRules, ...ttsrManager.getRules()]);
 ```
 
 Implications:
@@ -356,6 +355,10 @@ Implications:
 - Resolution is exact name match.
 - Unknown names return error listing available rule names.
 - Returned content is raw `rule.content` (frontmatter stripped), content type `text/markdown`.
+
+### Rule refresh
+
+Session-scoped prompt rebuilds re-discover rules for the current cwd, re-bucket them with live `ttsr.*` filters, and update prompt, URL-resolution, and subagent-inheritance snapshots. Explicitly supplied rule sets are re-bucketed without disk discovery. `/clear` and `/new` clear capability caches so edits are observed at those boundaries. TTSR registrations are replaced atomically; injection records survive for names still registered, while removed names lose their records. Rebuilding while TTSR is disabled preserves injection records for later re-enablement.
 
 ## 9. Known partial / non-enforced semantics
 

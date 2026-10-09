@@ -117,6 +117,7 @@ function createCtx(
 			getLeafId: () => leafEntry.id,
 			getEntry: (id: string) => (id === leafEntry.id ? leafEntry : undefined),
 			getArchivedRootId: (id: string) => (id === leafEntry.id ? archivedRootId : undefined),
+			getSessionName: () => undefined,
 		},
 		session: { navigateTree, restoreArchived, resumeAfterAskReanswer },
 		ui: {

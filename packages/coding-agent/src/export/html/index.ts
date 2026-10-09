@@ -4,13 +4,15 @@ import type { AgentState } from "@oh-my-pi/pi-agent-core";
 import { APP_NAME, isEnoent } from "@oh-my-pi/pi-utils";
 import { getResolvedThemeColors, getThemeExportColors } from "@oh-my-pi/pi-tui/theme";
 import type { SessionEntry, SessionHeader } from "../../session/session-entries";
-import { loadSessionFile } from "../../session/session-loader";
 import { SessionManager } from "../../session/session-manager";
 import { isTaskToolDetails } from "@oh-my-pi/pi-tui/tools/task-details";
+import { collectSubSessions as collectAllSubSessions, type SubSession } from "../../session/sub-sessions";
 import type { ExportThemeNames } from "./args";
 import templateCssPath from "./template.css" with { type: "file" };
 import templateHtmlPath from "./template.html" with { type: "file" };
 import templateJsPath from "./template.js" with { type: "file" };
+import highlightJsPath from "./vendor/highlight.min.js" with { type: "file" };
+import markedJsPath from "./vendor/marked.min.js" with { type: "file" };
 // Pre-built React tool renderers: built by `gen:tool-views` (`bun run gen:tool-views`),
 // run automatically by root `prepare` on install and by `prepack` at publish.
 import toolViewsJsPath from "./tool-views.generated.js" with { type: "file" };
@@ -25,13 +27,15 @@ export function resolveBundledHtmlAssetPath(assetPath: string, moduleDir: string
 	return path.resolve(moduleDir, assetPath);
 }
 
-/** Compose the standalone export template: minified CSS, tool renderers, and viewer JS inlined. */
+/** Compose the standalone export template with every style and script inlined. */
 export function getTemplate(): string {
 	if (cachedTemplate) return cachedTemplate;
 	const templateCss = fs.readFileSync(resolveBundledHtmlAssetPath(templateCssPath), "utf8");
 	const templateHtml = fs.readFileSync(resolveBundledHtmlAssetPath(templateHtmlPath as unknown as string), "utf8");
 	const templateJs = fs.readFileSync(resolveBundledHtmlAssetPath(templateJsPath), "utf8");
 	const toolViewsJs = fs.readFileSync(resolveBundledHtmlAssetPath(toolViewsJsPath), "utf8");
+	const markedJs = fs.readFileSync(resolveBundledHtmlAssetPath(markedJsPath), "utf8");
+	const highlightJs = fs.readFileSync(resolveBundledHtmlAssetPath(highlightJsPath), "utf8");
 	const minifiedCss = templateCss
 		.replace(/\/\*[\s\S]*?\*\//g, "")
 		.replace(/\s+/g, " ")
@@ -41,6 +45,8 @@ export function getTemplate(): string {
 	// CSS/JS are not interpreted as substitution patterns.
 	cachedTemplate = templateHtml
 		.replace("<template-css/>", () => `<style>${minifiedCss}</style>`)
+		.replace("<template-marked/>", () => `<script>${markedJs}</script>`)
+		.replace("<template-highlight/>", () => `<script>${highlightJs}</script>`)
 		.replace("<template-tool-views/>", () => `<script>${toolViewsJs}</script>`)
 		.replace("<template-js/>", () => `<script>${templateJs}</script>`);
 	return cachedTemplate;
@@ -164,17 +170,6 @@ export async function generateThemeStyles(
 	].join("\n");
 }
 
-/** Embedded subagent session transcript, keyed by slash-joined agent path in `SessionData.subSessions`. */
-export interface SubSession {
-	/** Bare agent id (session file stem), e.g. "ToolAsk". */
-	agentId: string;
-	/** Key of the parent sub-session, or null when spawned by the main session. */
-	parent: string | null;
-	header: SessionHeader | null;
-	entries: SessionEntry[];
-	leafId: string | null;
-}
-
 export interface SessionData {
 	header: SessionHeader | null;
 	entries: SessionEntry[];
@@ -257,67 +252,38 @@ function referencedSubagentIds(entries: SessionEntry[]): Set<string> {
 	return ids;
 }
 
-/**
- * Collect subagent session transcripts stored next to a session file.
- *
- * A session at `<dir>/<name>.jsonl` keeps its subagent sessions at `<dir>/<name>/<AgentId>.jsonl`;
- * each subagent's own children nest the same way under `<dir>/<name>/<AgentId>/`. Keys in the
- * returned record are slash-joined ids relative to the main session ("ToolAsk", "ToolAsk/Helper").
- * Corrupt or empty files are skipped silently.
- */
+/** Collect subagent transcripts, projecting archived branches for HTML export. */
 export async function collectSubSessions(
 	sessionFile: string,
 	options?: { includeArchived?: boolean; referencedAgentIds?: ReadonlySet<string> },
 ): Promise<Record<string, SubSession>> {
-	const result: Record<string, SubSession> = {};
-	if (!sessionFile.endsWith(".jsonl")) return result;
-	await collectSubSessionsFromDir(
-		sessionFile.slice(0, -6),
-		null,
-		result,
-		options?.includeArchived === true,
-		options?.referencedAgentIds,
-	);
-	return result;
-}
-
-async function collectSubSessionsFromDir(
-	dir: string,
-	parentKey: string | null,
-	out: Record<string, SubSession>,
-	includeArchived: boolean,
-	referencedAgentIds: ReadonlySet<string> | undefined,
-): Promise<void> {
-	let names: string[];
-	try {
-		names = await fs.promises.readdir(dir);
-	} catch (err) {
-		if (isEnoent(err)) return;
-		throw err;
-	}
-	for (const name of names) {
-		if (!name.endsWith(".jsonl") || name.includes(".bak")) continue;
-		const agentId = name.slice(0, -6);
-		if (referencedAgentIds && !referencedAgentIds.has(agentId)) continue;
-		const key = parentKey ? `${parentKey}/${agentId}` : agentId;
-		const sessionPath = path.join(dir, name);
-		const loaded = await loadSessionFile(sessionPath);
-		// Empty/corrupt files (no valid session header) load as [] — skip silently.
-		if (loaded.entries.length > 0) {
-			const subSession = await SessionManager.open(sessionPath, undefined, undefined, {
-				suppressBreadcrumb: true,
-				loadedSession: loaded,
-			});
+	const all = await collectAllSubSessions(sessionFile);
+	const selected: Record<string, SubSession> = {};
+	const rootDir = sessionFile.slice(0, -6);
+	const allChildIds = (parentKey: string | null): Set<string> =>
+		new Set(
+			Object.values(all)
+				.filter(sub => sub.parent === parentKey)
+				.map(sub => sub.agentId),
+		);
+	const visit = async (parentKey: string | null, agentIds: ReadonlySet<string>): Promise<void> => {
+		for (const agentId of agentIds) {
+			const key = parentKey ? `${parentKey}/${agentId}` : agentId;
+			const sub = all[key];
+			if (!sub) continue;
+			const subPath = path.join(rootDir, ...key.split("/")) + ".jsonl";
+			const manager = await SessionManager.open(subPath, undefined, undefined, { suppressBreadcrumb: true });
 			try {
-				const data = buildSessionData(subSession, undefined, { includeArchived });
-				out[key] = { agentId, parent: parentKey, ...data };
+				const data = buildSessionData(manager, undefined, { includeArchived: options?.includeArchived });
+				selected[key] = { ...sub, header: data.header, entries: data.entries, leafId: data.leafId };
+				await visit(key, options?.referencedAgentIds ? referencedSubagentIds(data.entries) : allChildIds(key));
 			} finally {
-				await subSession.close();
+				await manager.close();
 			}
 		}
-		const childAgentIds = referencedAgentIds ? referencedSubagentIds(out[key]?.entries ?? []) : undefined;
-		await collectSubSessionsFromDir(path.join(dir, agentId), key, out, includeArchived, childAgentIds);
-	}
+	};
+	await visit(null, options?.referencedAgentIds ?? allChildIds(null));
+	return selected;
 }
 
 /** Generate HTML from bundled template with runtime substitutions. */

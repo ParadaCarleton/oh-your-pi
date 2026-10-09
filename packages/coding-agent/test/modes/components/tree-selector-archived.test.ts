@@ -25,6 +25,7 @@ function render(session: SessionManager, includeArchived: boolean, onToggle?: ()
 		() => {},
 		undefined,
 		"all",
+		undefined,
 		{ showing: includeArchived, onToggle },
 	);
 	return Bun.stripANSI(selector.render(120).join("\n"));
@@ -69,6 +70,7 @@ describe("tree selector with archived branches", () => {
 			() => {},
 			undefined,
 			"all",
+			undefined,
 			{ showing: false, onToggle: () => toggled++ },
 		);
 		// Alt+R — the archived rows are not in this component's list at all, so the
@@ -90,6 +92,7 @@ describe("tree selector with archived branches", () => {
 			() => {},
 			undefined,
 			"all",
+			undefined,
 			{ showing: false, onArchiveToggle: id => archived.push(id) },
 		);
 		selector.handleInput("A");
@@ -108,6 +111,7 @@ describe("tree selector with archived branches", () => {
 			() => {},
 			undefined,
 			"all",
+			undefined,
 			{ showing: false, onArchiveToggle: id => archived.push(id) },
 		);
 		selector.handleInput("r");

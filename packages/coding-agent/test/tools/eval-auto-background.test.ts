@@ -94,8 +94,8 @@ describe("EvalTool auto-background", () => {
 				deliveries.push(text);
 			},
 		});
-		vi.spyOn(evalIndex.jsBackend, "execute").mockImplementation(
-			async (): Promise<ExecutorBackendResult> => baseResult({ output: "quick\n" }),
+		vi.spyOn(evalIndex.jsBackend, "execute").mockImplementation(async (): Promise<ExecutorBackendResult> =>
+			baseResult({ output: "quick\n" }),
 		);
 
 		const tool = new EvalTool(
@@ -186,14 +186,16 @@ describe("EvalTool auto-background", () => {
 		const gate = Promise.withResolvers<void>();
 		let executionSignal: AbortSignal | undefined;
 		vi.spyOn(evalIndex.pythonBackend, "isAvailable").mockResolvedValue(true);
-		const pythonExecuteSpy = vi.spyOn(evalIndex.pythonBackend, "execute").mockImplementation(
-			async (_code: string, options: ExecutorBackendExecOptions): Promise<ExecutorBackendResult> => {
-				executionSignal = options.signal;
-				options.onChunk("python start\n");
-				await gate.promise;
-				return baseResult({ output: "python start\npython done\n" });
-			},
-		);
+		const pythonExecuteSpy = vi
+			.spyOn(evalIndex.pythonBackend, "execute")
+			.mockImplementation(
+				async (_code: string, options: ExecutorBackendExecOptions): Promise<ExecutorBackendResult> => {
+					executionSignal = options.signal;
+					options.onChunk("python start\n");
+					await gate.promise;
+					return baseResult({ output: "python start\npython done\n" });
+				},
+			);
 		const jsExecuteSpy = vi.spyOn(evalIndex.jsBackend, "execute");
 
 		const tool = new EvalTool(

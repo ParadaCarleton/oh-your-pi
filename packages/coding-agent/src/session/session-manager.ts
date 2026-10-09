@@ -3901,6 +3901,7 @@ export class SessionManager {
 	 */
 	async archiveEmptyBranches(): Promise<{ branches: number; entries: number }> {
 		const { inTree, kept, preOrder } = this.#emptyBranchVerdict();
+		const activePath = new Set(this.getBranch().map(entry => entry.id));
 
 		// Outermost dropped node only: archiving a root hides everything under it,
 		// so a record for a dropped child would be redundant. Pre-order guarantees
@@ -3910,7 +3911,7 @@ export class SessionManager {
 		let entries = 0;
 		for (const node of preOrder) {
 			const { id, parentId } = node.entry;
-			if (!inTree.has(id) || kept.has(id)) continue;
+			if (!inTree.has(id) || kept.has(id) || activePath.has(id)) continue;
 			entries++;
 			if (parentId && covered.has(parentId)) {
 				covered.add(id);

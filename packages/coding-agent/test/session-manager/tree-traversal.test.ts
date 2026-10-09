@@ -1044,6 +1044,24 @@ describe("archiveEmptyBranches", () => {
 		expect(session.getEntries().map(e => e.id)).toEqual(before);
 	});
 
+	it("does not archive an active-path label for an empty abandoned branch", async () => {
+		const session = SessionManager.inMemory();
+		const rootId = session.appendMessage(userMsg("root"));
+		const answeredId = session.appendMessage(assistantMsg("answer"));
+		session.branch(rootId);
+		const abandonedId = session.appendMessage(userMsg("abandoned"));
+		session.branch(answeredId);
+		const labelId = session.appendLabelChange(abandonedId, "Abandoned branch");
+		const continuationId = session.appendMessage(userMsg("continue"));
+
+		const result = await session.archiveEmptyBranches();
+		expect(result.branches).toBe(1);
+		expect(session.getArchivedRootIds()).toEqual([abandonedId]);
+		expect(session.getArchivedRootId(labelId)).toBeUndefined();
+		expect(session.getArchivedRootId(continuationId)).toBeUndefined();
+		expect(session.getBranch().map(entry => entry.id)).toContain(continuationId);
+	});
+
 	it("persists the archive: the branch is still hidden after reloading from disk", async () => {
 		using tempDir = TempDir.createSync("@pi-session-archive-");
 		const session = SessionManager.create(tempDir.path(), tempDir.path());
